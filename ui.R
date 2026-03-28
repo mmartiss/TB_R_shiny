@@ -17,10 +17,10 @@ ui <- tagList(
 
       tags$ul(class = "rail-nav",
         rail_item("nav_upload", "01", "upload",     active = TRUE),
-#        rail_item("nav_qc",     "02", "qc"),
-#        rail_item("nav_filter", "03", "filter"),
-#        rail_item("nav_annot",  "04", "annotate"),
-#        rail_item("nav_viz",    "05", "visualize")
+        rail_item("nav_qc",     "02", "qc"),
+        rail_item("nav_filter", "03", "filter"),
+        rail_item("nav_annot",  "04", "annotate"),
+        rail_item("nav_viz",    "05", "visualize")
       ),
 
       div(class = "rail-bottom",
@@ -47,10 +47,10 @@ ui <- tagList(
 
       div(class = "pages",
         div(id = "pg_upload", class = "pg active", mod_upload_ui("upload")),
-#        div(id = "pg_qc",     class = "pg",        mod_qc_ui("qc")),
-#        div(id = "pg_filter", class = "pg",        mod_filter_ui("filter")),
-#        div(id = "pg_annot",  class = "pg",        mod_annotation_ui("annot")),
-#        div(id = "pg_viz",    class = "pg",        mod_visualization_ui("viz"))
+        div(id = "pg_qc",     class = "pg",        mod_qc_ui("qc")),
+        div(id = "pg_filter", class = "pg",        mod_filter_ui("filter")),
+        div(id = "pg_annot",  class = "pg",        mod_annotation_ui("annot")),
+        div(id = "pg_viz",    class = "pg",        mod_visualization_ui("viz"))
       )
     )
   )
