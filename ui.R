@@ -33,7 +33,7 @@ ui <- tagList(
     div(class = "content",
       div(class = "strip",
         div(class = "strip-path",
-          tags$span(class = "strip-root", "vcf"),
+          tags$span(class = "strip-root", "files"),
           tags$span(class = "strip-arrow", "\u203a"),
           textOutput("strip_title", inline = TRUE)
         ),

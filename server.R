@@ -28,10 +28,10 @@ server <- function(input, output, session) {
 
   # Upload module
   upload_out <- mod_upload_server("upload")
-  # upload_out$data          : reactive data.frame
-  # upload_out$filename      : reactive character
-  # upload_out$analysis_type : reactive character
-  # upload_out$sep           : reactive character
+  #upload_out$data          : reactive data.frame
+  #upload_out$filename      : reactive character
+  #upload_out$analysis_type : reactive character
+  #upload_out$sep           : reactive character
 
   observe({
     req(upload_out$data())
