@@ -1,22 +1,15 @@
-# ============================================================
-#  app.R — Entry point
-#  Source order matters: helpers → modules → ui → server
-# ============================================================
+setwd("~/MartynasLib/Universitetas/4 kursas/8_semestras/praktika/mano_r")
 
 library(shiny)
-library(shinyjs)
+library(shinydashboard)
+library(shinyWidgets)
 library(DT)
-library(plotly)
-library(ggplot2)
+library(jsonlite)
 
-source("R/helpers.R")
-source("R/modules/mod_upload.R")
-source("R/modules/mod_annotation.R")
-source("R/modules/mod_filter.R")
-source("R/modules/mod_qc.R")
-source("R/modules/mod_visualization.R")
+source("modules/upload.r")
+source("modules/filter.r")
 
-source("ui.R")
-source("server.R")
+source("ui.r")
+source("server.r")
 
-shinyApp(ui = ui, server = server)
+shinyApp(ui, server)
