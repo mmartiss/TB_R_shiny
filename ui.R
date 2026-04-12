@@ -14,7 +14,8 @@ ui <- dashboardPage(
       menuItem("Start", tabName = "start"),
       menuItem("File upload", tabName = "upload"),
       menuItem("TB-Profiler", tabName = "tbprofiler"),
-      menuItem("Filtering", tabName = "filter")
+      menuItem("Filtering", tabName = "filter"),
+      menuItem("Amplicon", tabName = "amplicon")
     )
   ),
   #main
@@ -33,6 +34,9 @@ ui <- dashboardPage(
       ),
       tabItem(tabName = "filter",
               filterUI("filterID")
+      ),
+      tabItem(tabName = "amplicon",
+              ampliconUI("ampliconID")
       )
     )
   ) 
