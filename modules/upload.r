@@ -9,9 +9,6 @@ uploadUI <- function(id) {
                   "16s"            = "16s",
                   "ITS"            = "its",
                   "TB-Profiler"    = "tbprofiler",
-                  "AMRFinder+"     = "amrfinder",
-                  "MLST"           = "mlst",
-                  "Kraken2"        = "kraken2",
                   "Custom / Other" = "custom"
                 )),
     
@@ -60,8 +57,8 @@ uploadServer <- function(id) {
           tags$label("Delimiter"),
           selectInput(session$ns("delimeter"), NULL,
                       choices = c(
-                        "Comma (CSV)"  = ",",
                         "Tab (TSV)"    = "\t",
+                        "Comma (CSV)"  = ",",
                         "Semicolon"    = ";",
                         "Pipe"         = "|"
                       ))
@@ -169,10 +166,19 @@ uploadServer <- function(id) {
     })
     
     list(
-      data          = loaded_data,
-      abundance     = loaded_abundance,
-      samples       = loaded_samples,
-      meta          = loaded_meta
+      type      = reactive(input$analysis_type),
+      abundance = loaded_abundance,
+      samples   = loaded_samples,
+      standard  = loaded_data,
+      meta      = loaded_meta,
+      data      = loaded_data,
+      files     = reactive({ 
+        if (needs_abundance()) {
+          input$sample_files
+        } else {
+          input$file 
+        }
+      })
     )
   })
 }

@@ -28,8 +28,7 @@ ampliconUI <- function(id) {
       tabPanel("Taxonomic Bar Chart",       plotlyOutput(ns("plot_bar"),     height = "600px")),
       tabPanel("Relative Abundance Heatmap",plotlyOutput(ns("plot_heatmap"), height = "600px")),
       tabPanel("Alpha Diversity",           plotlyOutput(ns("plot_alpha"),   height = "500px")),
-      tabPanel("Beta Diversity (PCoA)",     plotlyOutput(ns("plot_beta"),    height = "500px")),
-      tabPanel("Rarefaction Curves",        plotlyOutput(ns("plot_rare"),    height = "500px"))
+      tabPanel("Beta Diversity (PCoA)",     plotlyOutput(ns("plot_beta"),    height = "500px"))
     )
   )
 }
@@ -44,67 +43,63 @@ ampliconServer <- function(id, abundance, samples) {
     # ── Duomenų paruošimas (tik po mygtuko) ───────────────────────────────────
     
     prepared <- eventReactive(input$btn_generate, {
-      req(abundance(), samples())
+      ab  <- abundance() #tax_id & samples
+      smp <- samples()   #tax_id & tax
       
-      ab  <- abundance()
-      smp <- samples()
-      
-      # Abundance wide: tax_id + mėginių stulpeliai
-      sample_cols <- setdiff(names(ab), "tax_id")
-      
-      # Taxonomy lookup iš samples failo
-      tax_lookup <- smp[, intersect(names(smp), TAX_COLS), drop = FALSE]
-      
-      # Sujungti taxonomy į abundance
-      ab_tax <- merge(ab, tax_lookup, by = "tax_id", all.x = TRUE)
-      
-      level <- input$tax_level
-      
-      if (!level %in% names(ab_tax)) {
-        showNotification(paste("Stulpelis", level, "nerastas duomenyse."), type = "error")
+      #check if both files have the right column
+      if (!"tax_id" %in% names(ab) || !"tax_id" %in% names(smp)) {
+        showNotification("Error: Both files must contain a 'tax_id' column for the merge.", type = "error")
         return(NULL)
       }
       
-      ab_tax[[level]] <- ifelse(
-        is.na(ab_tax[[level]]) | ab_tax[[level]] == "",
-        paste0("Unknown_", level),
-        ab_tax[[level]]
-      )
+      # ab_tax = numbers, genus/phylum dolumns
+      ab_tax <- merge(ab, smp, by = "tax_id", all.x = TRUE)
       
-      # Agreguoti pagal taxonominį lygį -> long format
-      long <- do.call(rbind, lapply(sample_cols, function(sc) {
+      # whihc level is chosen
+      level <- input$tax_level
+      if (!level %in% names(ab_tax)) {
+        showNotification(paste("Column", level, "not found in the sample data."), type = "error")
+        return(NULL)
+      }
+      
+      # identify the sample columns (those that were in the original 'ab' file, excluding tax_id)
+      sample_cols <- setdiff(names(ab), "tax_id")
+      sample_cols <- sample_cols[sapply(ab[sample_cols], is.numeric)]
+      
+      # LONG FORMAT
+      ab_tax[[level]][is.na(ab_tax[[level]]) | ab_tax[[level]] == ""] <- paste0("Unknown_", level)
+      
+      long_list <- lapply(sample_cols, function(sc) {
         data.frame(
           sample    = sc,
-          taxon     = ab_tax[[level]],
+          taxon     = as.character(ab_tax[[level]]),
           abundance = as.numeric(ab_tax[[sc]]),
           stringsAsFactors = FALSE
         )
+      })
+      long <- do.call(rbind, long_list)
+      
+      # aggregate (sum the members at the same taxonomic level)
+      long_agg <- aggregate(abundance ~ sample + taxon, data = long, FUN = sum, na.rm = TRUE)
+      
+      # Relative abundance (%)
+      long_rel <- do.call(rbind, lapply(split(long_agg, long_agg$sample), function(s) {
+        total <- sum(s$abundance, na.rm = TRUE)
+        s$rel <- if (total > 0) s$abundance / total else 0
+        s
       }))
       
-      long <- long[!is.na(long$abundance), ]
+      # top n filt
+      taxon_means <- aggregate(rel ~ taxon, data = long_rel, FUN = mean)
+      top_taxa    <- taxon_means$taxon[order(taxon_means$rel, decreasing = TRUE)][1:min(input$top_n, nrow(taxon_means))]
       
-      # Normalizuoti kiekvienam mėginiui
-      long <- do.call(rbind, lapply(split(long, long$sample), function(s) {
-        agg        <- aggregate(abundance ~ taxon, data = s, FUN = sum, na.rm = TRUE)
-        total      <- sum(agg$abundance, na.rm = TRUE)
-        agg$rel    <- if (total > 0) agg$abundance / total else agg$abundance
-        agg$sample <- unique(s$sample)
-        agg
-      }))
+      final_df <- long_rel[long_rel$taxon %in% top_taxa & long_rel$rel >= input$min_abund, ]
       
-      # Top N taxa
-      taxon_means <- tapply(long$rel, long$taxon, mean, na.rm = TRUE)
-      top_taxa    <- names(sort(taxon_means, decreasing = TRUE))[seq_len(min(input$top_n, length(taxon_means)))]
-      
-      long <- long[long$taxon %in% top_taxa & long$rel >= input$min_abund, ]
-      
-      # Gražinti taip pat counts iš samples (rarefaction + alpha)
       list(
-        long       = long,
-        ab_tax     = ab_tax,
+        long        = final_df,
+        raw_merged  = ab_tax,
         sample_cols = sample_cols,
-        smp        = smp,
-        level      = level
+        level       = level
       )
     })
     
@@ -260,55 +255,6 @@ ampliconServer <- function(id, abundance, samples) {
         layout(
           xaxis = list(title = paste0("PC1 (", var_exp[1], "%)")),
           yaxis = list(title = paste0("PC2 (", var_exp[2], "%)"))
-        )
-    })
-    
-    # ── Rarefaction curves ────────────────────────────────────────────────────
-    
-    output$plot_rare <- renderPlotly({
-      req(prepared())
-      ab_tax      <- prepared()$ab_tax
-      sample_cols <- prepared()$sample_cols
-      
-      rare_data <- do.call(rbind, lapply(sample_cols, function(sc) {
-        counts <- round(as.numeric(ab_tax[[sc]]))
-        counts <- counts[!is.na(counts) & counts > 0]
-        if (length(counts) == 0) return(NULL)
-        
-        total  <- sum(counts)
-        steps  <- unique(round(seq(0, total, length.out = 20)))
-        steps  <- steps[steps > 0]
-        
-        richness <- sapply(steps, function(n) {
-          if (n >= total) return(sum(counts > 0))
-          prob_absent <- sapply(counts, function(c) {
-            lc  <- lchoose(total - c, n)
-            lt  <- lchoose(total, n)
-            if (is.nan(lc) || is.infinite(lc)) return(1)
-            exp(lc - lt)
-          })
-          sum(1 - prob_absent)
-        })
-        
-        data.frame(sample = sc, depth = steps, richness = richness)
-      }))
-      
-      if (is.null(rare_data)) {
-        return(plot_ly() |> layout(title = "Nepavyko apskaičiuoti rarefaction kreivių"))
-      }
-      
-      plot_ly(rare_data,
-              x             = ~depth,
-              y             = ~richness,
-              color         = ~sample,
-              type          = "scatter",
-              mode          = "lines",
-              hovertemplate = "Sample: %{fullData.name}<br>Depth: %{x}<br>Richness: %{y:.0f}<extra></extra>"
-      ) |>
-        layout(
-          xaxis  = list(title = "Sequencing depth"),
-          yaxis  = list(title = "Observed taxa"),
-          legend = list(title = list(text = "Sample"))
         )
     })
     
