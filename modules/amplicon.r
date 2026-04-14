@@ -21,6 +21,16 @@ ampliconUI <- function(id) {
       column(3,
              tags$br(),
              actionButton(ns("btn_generate"), "Generate plots", class = "btn-success")
+      ),
+      column(4,
+             tags$label("Color palatte"),
+             selectInput(ns("color_palette"), NULL,
+                         choices = c("Tableau 10", "Pastel", "Bold", "Viridis-disc", "Earth"),
+                         selected = "Tableau 10")
+      ),
+      column(8,
+             tags$label("TAx color editor"),
+             uiOutput(ns("color_editor"))
       )
     ),
     
@@ -35,38 +45,53 @@ ampliconUI <- function(id) {
 
 ampliconServer <- function(id, abundance, samples) {
   moduleServer(id, function(input, output, session) {
+    ns <- session$ns
     
     TAX_COLS <- c("tax_id", "species", "genus", "family", "order", "class",
                   "phylum", "clade", "superkingdom", "subspecies",
                   "species.subgroup", "species.group", "estimated.counts", "abundance")
     
+    # ── Paletės ───────────────────────────────────────────────────────────────
+    
+    PALETTES <- list(
+      "Tableau 10"   = c("#4E79A7","#F28E2B","#E15759","#76B7B2","#59A14F",
+                         "#EDC948","#B07AA1","#FF9DA7","#9C755F","#BAB0AC"),
+      "Pastel"       = c("#AEC6CF","#FFD1DC","#B5EAD7","#FFDAC1","#C7CEEA",
+                         "#E2F0CB","#F2D7D9","#D5E8D4","#DAE8FC","#F8CECC"),
+      "Bold"         = c("#E41A1C","#377EB8","#4DAF4A","#984EA3","#FF7F00",
+                         "#A65628","#F781BF","#999999","#66C2A5","#FC8D62"),
+      "Viridis-disc" = c("#440154","#30678D","#35B779","#FDE724","#482677",
+                         "#1F9E89","#73D055","#DCE319","#3CBB75","#94D840"),
+      "Earth"        = c("#8C510A","#BF812D","#DFC27D","#80CDC1","#35978F",
+                         "#01665E","#543005","#F6E8C3","#C7EAE5","#003C30")
+    )
+    
+    # ── Spalvų reaktyvios reikšmės ────────────────────────────────────────────
+    
+    rv_colors <- reactiveValues(map = list())
+    
     # ── Duomenų paruošimas (tik po mygtuko) ───────────────────────────────────
     
     prepared <- eventReactive(input$btn_generate, {
-      ab  <- abundance() #tax_id & samples
-      smp <- samples()   #tax_id & tax
+      ab  <- abundance()
+      smp <- samples()
       
-      #check if both files have the right column
       if (!"tax_id" %in% names(ab) || !"tax_id" %in% names(smp)) {
         showNotification("Error: Both files must contain a 'tax_id' column for the merge.", type = "error")
         return(NULL)
       }
       
-      # ab_tax = numbers, genus/phylum dolumns
       ab_tax <- merge(ab, smp, by = "tax_id", all.x = TRUE)
       
-      # whihc level is chosen
       level <- input$tax_level
       if (!level %in% names(ab_tax)) {
         showNotification(paste("Column", level, "not found in the sample data."), type = "error")
         return(NULL)
       }
       
-      # identify the sample columns (those that were in the original 'ab' file, excluding tax_id)
       sample_cols <- setdiff(names(ab), "tax_id")
       sample_cols <- sample_cols[sapply(ab[sample_cols], is.numeric)]
       
-      # LONG FORMAT
       ab_tax[[level]][is.na(ab_tax[[level]]) | ab_tax[[level]] == ""] <- paste0("Unknown_", level)
       
       long_list <- lapply(sample_cols, function(sc) {
@@ -79,43 +104,96 @@ ampliconServer <- function(id, abundance, samples) {
       })
       long <- do.call(rbind, long_list)
       
-      # aggregate (sum the members at the same taxonomic level)
       long_agg <- aggregate(abundance ~ sample + taxon, data = long, FUN = sum, na.rm = TRUE)
       
-      # Relative abundance (%)
-      # We calculate relative abundance for ALL taxa first for Diversity indices
       long_rel_full <- do.call(rbind, lapply(split(long_agg, long_agg$sample), function(s) {
         total <- sum(s$abundance, na.rm = TRUE)
         s$rel <- if (total > 0) s$abundance / total else 0
         s
       }))
       
-      # top n filt
-      # This filtered version is only for Bar Chart and Heatmap
       taxon_means <- aggregate(rel ~ taxon, data = long_rel_full, FUN = mean)
       top_taxa    <- taxon_means$taxon[order(taxon_means$rel, decreasing = TRUE)][1:min(input$top_n, nrow(taxon_means))]
       
       final_df <- long_rel_full[long_rel_full$taxon %in% top_taxa & long_rel_full$rel >= input$min_abund, ]
       
-      # Return both full and filtered data
       list(
-        long_filt   = final_df,      # For Bar/Heatmap
-        long_full   = long_rel_full,  # For Alpha/Beta diversity
+        long_filt   = final_df,
+        long_full   = long_rel_full,
         sample_cols = sample_cols,
         level       = level
       )
     })
     
+    # ── Aktyvūs taksai ────────────────────────────────────────────────────────
+    
+    active_taxa <- reactive({
+      req(prepared())
+      unique(prepared()$long_filt$taxon)
+    })
+    
+    # ── Kai pasikeičia paletė arba taksai — atnaujink rv_colors ──────────────
+    
+    observe({
+      req(active_taxa())
+      taxa <- active_taxa()
+      pal  <- PALETTES[[input$color_palette]]
+      cols <- rep_len(pal, length(taxa))
+      rv_colors$map <- setNames(as.list(cols), taxa)
+    })
+    
+    # ── Color editor UI ───────────────────────────────────────────────────────
+    
+    output$color_editor <- renderUI({
+      req(active_taxa(), rv_colors$map)
+      taxa <- active_taxa()
+      
+      tagList(
+        div(style = "display:flex; flex-wrap:wrap; gap:8px; margin-top:4px;",
+            lapply(taxa, function(t) {
+              input_id <- paste0("col_", gsub("[^A-Za-z0-9]", "_", t))
+              div(style = "display:flex; align-items:center; gap:4px;",
+                  tags$input(
+                    type  = "color",
+                    id    = ns(input_id),
+                    value = rv_colors$map[[t]],
+                    onchange = sprintf("Shiny.setInputValue('%s', this.value)", ns(input_id)),
+                    style = "width:28px; height:28px; border:none; border-radius:50%%; cursor:pointer; padding:0;"
+                  ),
+                  tags$small(t, style = "font-size:11px;")
+              )
+            })
+        )
+      )
+    })
+    
+    # ── Stebėk kiekvieno color picker'io pasikeitimą ──────────────────────────
+    
+    observe({
+      req(active_taxa())
+      taxa <- active_taxa()
+      
+      lapply(taxa, function(t) {
+        input_id <- paste0("col_", gsub("[^A-Za-z0-9]", "_", t))
+        observeEvent(input[[input_id]], {
+          rv_colors$map[[t]] <- input[[input_id]]
+        }, ignoreInit = TRUE)
+      })
+    })
+    
+    # ── Galutinis spalvų žemėlapis ────────────────────────────────────────────
+    
+    color_map <- reactive({
+      req(rv_colors$map)
+      unlist(rv_colors$map)
+    })
+    
     # ── Bar chart ─────────────────────────────────────────────────────────────
     
     output$plot_bar <- renderPlotly({
-      req(prepared())
-      df      <- prepared()$long_filt
-      n_taxa  <- length(unique(df$taxon))
-      palette <- colorRampPalette(c(
-        "#4E79A7","#F28E2B","#E15759","#76B7B2","#59A14F",
-        "#EDC948","#B07AA1","#FF9DA7","#9C755F","#BAB0AC"
-      ))(n_taxa)
+      req(prepared(), color_map())
+      df         <- prepared()$long_filt
+      palette    <- color_map()
       
       plot_ly(df,
               x         = ~sample,
@@ -169,52 +247,40 @@ ampliconServer <- function(id, abundance, samples) {
     
     output$plot_alpha <- renderPlotly({
       req(prepared())
-      # Use FULL data for diversity, not filtered
       df_full <- prepared()$long_full
       
-      # Calculate metrics for each sample
       alpha_df <- do.call(rbind, lapply(split(df_full, df_full$sample), function(d) {
         p <- d$rel[d$rel > 0]
         if (length(p) == 0) return(NULL)
-        
-        shannon  <- -sum(p * log(p))
-        simpson  <- 1 - sum(p^2)
-        observed <- length(p)
-        
         data.frame(
-          sample   = unique(d$sample), 
-          Shannon  = shannon, 
-          Simpson  = simpson, 
-          Observed = observed,
+          sample   = unique(d$sample),
+          Shannon  = -sum(p * log(p)),
+          Simpson  = 1 - sum(p^2),
+          Observed = length(p),
           stringsAsFactors = FALSE
         )
       }))
       
-      # 1. Create Observed Richness Plot
       p1 <- plot_ly(alpha_df, y = ~Observed, type = "box", name = "Observed",
                     boxpoints = "all", jitter = 0.3, text = ~sample,
                     marker = list(color = "#4E79A7")) %>%
         layout(yaxis = list(title = "Count"))
       
-      # 2. Create Shannon Index Plot
       p2 <- plot_ly(alpha_df, y = ~Shannon, type = "box", name = "Shannon",
                     boxpoints = "all", jitter = 0.3, text = ~sample,
                     marker = list(color = "#F28E2B")) %>%
         layout(yaxis = list(title = "Index H'"))
       
-      # 3. Create Simpson Index Plot
       p3 <- plot_ly(alpha_df, y = ~Simpson, type = "box", name = "Simpson",
                     boxpoints = "all", jitter = 0.3, text = ~sample,
                     marker = list(color = "#E15759")) %>%
         layout(yaxis = list(title = "Index 1-D"))
       
-      # Combine the three plots into subplots
-      # shareY = FALSE is the key - it gives each plot its own scale
       subplot(p1, p2, p3, nrows = 1, margin = 0.05, titleY = TRUE) %>%
         layout(
-          title = list(text = "Alpha Diversity Metrics", x = 0),
+          title      = list(text = "Alpha Diversity Metrics", x = 0),
           showlegend = FALSE,
-          margin = list(t = 50, b = 50)
+          margin     = list(t = 50, b = 50)
         )
     })
     
@@ -222,43 +288,38 @@ ampliconServer <- function(id, abundance, samples) {
     
     output$plot_beta <- renderPlotly({
       req(prepared())
-      # Use FULL data for Beta diversity
       df_full <- prepared()$long_full
       
-      # Create matrix (Samples x Taxa)
       mat <- reshape(df_full[, c("sample", "taxon", "rel")],
                      idvar     = "sample",
                      timevar   = "taxon",
                      direction = "wide")
       rownames(mat) <- mat$sample
-      mat$sample     <- NULL
+      mat$sample    <- NULL
       mat[is.na(mat)] <- 0
       
       if (nrow(mat) < 3) {
         return(plot_ly() |> layout(title = "Need at least 3 samples for PCoA"))
       }
       
-      # Calculate PCoA using Euclidean distance
       dist_mat <- dist(as.matrix(mat), method = "euclidean")
       pcoa_res <- cmdscale(dist_mat, k = 2, eig = TRUE)
-      
-      # Percent variation explained
       var_exp  <- round(pcoa_res$eig / sum(pcoa_res$eig) * 100, 1)
       
-      pcoa_df  <- data.frame(
+      pcoa_df <- data.frame(
         sample = rownames(mat),
         PC1    = pcoa_res$points[, 1],
         PC2    = pcoa_res$points[, 2]
       )
       
       plot_ly(pcoa_df,
-              x            = ~PC1,
-              y            = ~PC2,
-              text         = ~sample,
-              type         = "scatter",
-              mode         = "markers+text",
-              textposition = "top center",
-              marker       = list(size = 12, opacity = 0.7),
+              x             = ~PC1,
+              y             = ~PC2,
+              text          = ~sample,
+              type          = "scatter",
+              mode          = "markers+text",
+              textposition  = "top center",
+              marker        = list(size = 12, opacity = 0.7),
               hovertemplate = "<b>%{text}</b><br>PC1: %{x:.3f}<br>PC2: %{y:.3f}<extra></extra>"
       ) |>
         layout(
