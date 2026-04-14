@@ -29,9 +29,9 @@ ui <- dashboardPage(
         uploadUI("uploadID"),
         verbatimTextOutput("debug")
       ),
-      #tabItem(tabName = "tbprofiler",
-      #        tbprofilerUI("tbID")
-      #),
+      tabItem(tabName = "tbprofiler",
+             tbprofilerUI("tbID")
+      ),
       tabItem(tabName = "filter",
               filterUI("filterID")
       ),
