@@ -83,21 +83,24 @@ ampliconServer <- function(id, abundance, samples) {
       long_agg <- aggregate(abundance ~ sample + taxon, data = long, FUN = sum, na.rm = TRUE)
       
       # Relative abundance (%)
-      long_rel <- do.call(rbind, lapply(split(long_agg, long_agg$sample), function(s) {
+      # We calculate relative abundance for ALL taxa first for Diversity indices
+      long_rel_full <- do.call(rbind, lapply(split(long_agg, long_agg$sample), function(s) {
         total <- sum(s$abundance, na.rm = TRUE)
         s$rel <- if (total > 0) s$abundance / total else 0
         s
       }))
       
       # top n filt
-      taxon_means <- aggregate(rel ~ taxon, data = long_rel, FUN = mean)
+      # This filtered version is only for Bar Chart and Heatmap
+      taxon_means <- aggregate(rel ~ taxon, data = long_rel_full, FUN = mean)
       top_taxa    <- taxon_means$taxon[order(taxon_means$rel, decreasing = TRUE)][1:min(input$top_n, nrow(taxon_means))]
       
-      final_df <- long_rel[long_rel$taxon %in% top_taxa & long_rel$rel >= input$min_abund, ]
+      final_df <- long_rel_full[long_rel_full$taxon %in% top_taxa & long_rel_full$rel >= input$min_abund, ]
       
+      # Return both full and filtered data
       list(
-        long        = final_df,
-        raw_merged  = ab_tax,
+        long_filt   = final_df,      # For Bar/Heatmap
+        long_full   = long_rel_full,  # For Alpha/Beta diversity
         sample_cols = sample_cols,
         level       = level
       )
@@ -107,7 +110,7 @@ ampliconServer <- function(id, abundance, samples) {
     
     output$plot_bar <- renderPlotly({
       req(prepared())
-      df      <- prepared()$long
+      df      <- prepared()$long_filt
       n_taxa  <- length(unique(df$taxon))
       palette <- colorRampPalette(c(
         "#4E79A7","#F28E2B","#E15759","#76B7B2","#59A14F",
@@ -136,7 +139,7 @@ ampliconServer <- function(id, abundance, samples) {
     
     output$plot_heatmap <- renderPlotly({
       req(prepared())
-      df <- prepared()$long
+      df <- prepared()$long_filt
       
       mat <- reshape(df[, c("sample", "taxon", "rel")],
                      idvar     = "taxon",
@@ -166,42 +169,52 @@ ampliconServer <- function(id, abundance, samples) {
     
     output$plot_alpha <- renderPlotly({
       req(prepared())
-      ab_tax      <- prepared()$ab_tax
-      sample_cols <- prepared()$sample_cols
+      # Use FULL data for diversity, not filtered
+      df_full <- prepared()$long_full
       
-      alpha_df <- do.call(rbind, lapply(sample_cols, function(sc) {
-        counts <- as.numeric(ab_tax[[sc]])
-        counts <- counts[!is.na(counts) & counts > 0]
-        if (length(counts) == 0) return(NULL)
+      # Calculate metrics for each sample
+      alpha_df <- do.call(rbind, lapply(split(df_full, df_full$sample), function(d) {
+        p <- d$rel[d$rel > 0]
+        if (length(p) == 0) return(NULL)
         
-        p        <- counts / sum(counts)
         shannon  <- -sum(p * log(p))
         simpson  <- 1 - sum(p^2)
-        observed <- length(counts)
+        observed <- length(p)
         
-        data.frame(sample = sc, Shannon = shannon, Simpson = simpson, Observed = observed)
+        data.frame(
+          sample   = unique(d$sample), 
+          Shannon  = shannon, 
+          Simpson  = simpson, 
+          Observed = observed,
+          stringsAsFactors = FALSE
+        )
       }))
       
-      df_long <- rbind(
-        data.frame(sample = alpha_df$sample, metric = "Shannon",  value = alpha_df$Shannon),
-        data.frame(sample = alpha_df$sample, metric = "Simpson",  value = alpha_df$Simpson),
-        data.frame(sample = alpha_df$sample, metric = "Observed", value = alpha_df$Observed)
-      )
+      # 1. Create Observed Richness Plot
+      p1 <- plot_ly(alpha_df, y = ~Observed, type = "box", name = "Observed",
+                    boxpoints = "all", jitter = 0.3, text = ~sample,
+                    marker = list(color = "#4E79A7")) %>%
+        layout(yaxis = list(title = "Count"))
       
-      plot_ly(df_long,
-              x         = ~metric,
-              y         = ~value,
-              color     = ~metric,
-              type      = "box",
-              boxpoints = "all",
-              jitter    = 0.3,
-              text      = ~paste0(sample, "<br>", round(value, 3)),
-              hoverinfo = "text"
-      ) |>
+      # 2. Create Shannon Index Plot
+      p2 <- plot_ly(alpha_df, y = ~Shannon, type = "box", name = "Shannon",
+                    boxpoints = "all", jitter = 0.3, text = ~sample,
+                    marker = list(color = "#F28E2B")) %>%
+        layout(yaxis = list(title = "Index H'"))
+      
+      # 3. Create Simpson Index Plot
+      p3 <- plot_ly(alpha_df, y = ~Simpson, type = "box", name = "Simpson",
+                    boxpoints = "all", jitter = 0.3, text = ~sample,
+                    marker = list(color = "#E15759")) %>%
+        layout(yaxis = list(title = "Index 1-D"))
+      
+      # Combine the three plots into subplots
+      # shareY = FALSE is the key - it gives each plot its own scale
+      subplot(p1, p2, p3, nrows = 1, margin = 0.05, titleY = TRUE) %>%
         layout(
-          xaxis  = list(title = "Metric"),
-          yaxis  = list(title = "Value"),
-          legend = list(title = list(text = "Metric"))
+          title = list(text = "Alpha Diversity Metrics", x = 0),
+          showlegend = FALSE,
+          margin = list(t = 50, b = 50)
         )
     })
     
@@ -209,37 +222,33 @@ ampliconServer <- function(id, abundance, samples) {
     
     output$plot_beta <- renderPlotly({
       req(prepared())
-      df <- prepared()$long
+      # Use FULL data for Beta diversity
+      df_full <- prepared()$long_full
       
-      mat <- reshape(df[, c("sample", "taxon", "rel")],
-                     idvar     = "taxon",
-                     timevar   = "sample",
+      # Create matrix (Samples x Taxa)
+      mat <- reshape(df_full[, c("sample", "taxon", "rel")],
+                     idvar     = "sample",
+                     timevar   = "taxon",
                      direction = "wide")
-      rownames(mat) <- mat$taxon
-      mat$taxon     <- NULL
-      names(mat)    <- gsub("^rel\\.", "", names(mat))
+      rownames(mat) <- mat$sample
+      mat$sample     <- NULL
       mat[is.na(mat)] <- 0
       
-      mat_t <- t(as.matrix(mat))
-      
-      if (nrow(mat_t) < 3) {
-        return(plot_ly() |> layout(title = "Reikia bent 3 mėginių PCoA"))
+      if (nrow(mat) < 3) {
+        return(plot_ly() |> layout(title = "Need at least 3 samples for PCoA"))
       }
       
-      dist_mat <- as.matrix(dist(mat_t, method = "euclidean"))
-      n        <- nrow(dist_mat)
-      H        <- diag(n) - matrix(1/n, n, n)
-      B        <- -0.5 * H %*% (dist_mat^2) %*% H
-      eig      <- eigen(B, symmetric = TRUE)
+      # Calculate PCoA using Euclidean distance
+      dist_mat <- dist(as.matrix(mat), method = "euclidean")
+      pcoa_res <- cmdscale(dist_mat, k = 2, eig = TRUE)
       
-      pos_eig  <- eig$values[eig$values > 1e-10]
-      coords   <- eig$vectors[, 1:2] %*% diag(sqrt(pmax(eig$values[1:2], 0)))
-      var_exp  <- round(eig$values[1:2] / sum(pos_eig) * 100, 1)
+      # Percent variation explained
+      var_exp  <- round(pcoa_res$eig / sum(pcoa_res$eig) * 100, 1)
       
       pcoa_df  <- data.frame(
-        sample = rownames(mat_t),
-        PC1    = coords[, 1],
-        PC2    = coords[, 2]
+        sample = rownames(mat),
+        PC1    = pcoa_res$points[, 1],
+        PC2    = pcoa_res$points[, 2]
       )
       
       plot_ly(pcoa_df,
@@ -249,8 +258,8 @@ ampliconServer <- function(id, abundance, samples) {
               type         = "scatter",
               mode         = "markers+text",
               textposition = "top center",
-              marker       = list(size = 10),
-              hovertemplate = "%{text}<br>PC1: %{x:.3f}<br>PC2: %{y:.3f}<extra></extra>"
+              marker       = list(size = 12, opacity = 0.7),
+              hovertemplate = "<b>%{text}</b><br>PC1: %{x:.3f}<br>PC2: %{y:.3f}<extra></extra>"
       ) |>
         layout(
           xaxis = list(title = paste0("PC1 (", var_exp[1], "%)")),
