@@ -12,9 +12,11 @@ ui <- dashboardPage(
     width = 200,
     sidebarMenu(
       menuItem("Start", tabName = "start"),
-      menuItem("File upload", tabName = "upload"),
-      menuItem("Filtering", tabName = "filter"),
-      menuItem("Amplicon", tabName = "amplicon")
+      menuItem("1. File upload", tabName = "upload"),
+      menuItem("2. Abundance filtering", tabName = "abundance"),
+      menuItem("3. Counts filtering", tabName = "counts"),
+      menuItem("4. Taxonomy filtering", tabName = "taxonomy"),
+      menuItem("5. Amplicon", tabName = "amplicon")
     )
   ),
   #main
@@ -25,11 +27,19 @@ ui <- dashboardPage(
       ),
       tabItem(
         tabName = "upload", 
-        uploadUI("uploadID"),
-        verbatimTextOutput("debug")
+        uploadUI("uploadID")
       ),
-      tabItem(tabName = "filter",
-              filterUI("filterID")
+      tabItem(
+        tabName = "abundance",
+        filterUI("ab_filt", "Abundance Filtering")
+      ),
+      tabItem(
+        tabName = "counts",
+        filterUI("counts_filt", "Counts Filtering")
+      ),
+      tabItem(
+        tabName = "taxonomy",
+        filterUI("tax_filt", "Taxonomy Filtering")
       ),
       tabItem(tabName = "amplicon",
               ampliconUI("ampliconID")

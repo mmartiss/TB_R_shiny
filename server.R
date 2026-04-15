@@ -6,6 +6,10 @@ server <- function(input, output, session) {
   # upload$meta
   upload <- uploadServer("uploadID")
   
+  ab_filtered <- filterServer("ab_filt", reactive(upload$abundance()))
+  counts_filtered <- filterServer("counts_filt", reactive(upload$counts()))
+  tax_filtered <- filterServer("tax_filt", reactive(upload$taxonomy()))
+  
   #output$debug <- renderPrint({
   #  req(upload$abundance())
   #  upload$abundance()
@@ -13,14 +17,14 @@ server <- function(input, output, session) {
   
   #filter paima data
   #filterServer("filterID", data = reactive(upload$data()))
-  filter <- filterServer(
-    "filterID",
-    data          = reactive(upload$data()),
-    abundance     = reactive(upload$abundance()),
-    samples       = reactive(upload$samples()),
-    metada        = reactive(upload$metadata()),
-    analysis_type = reactive(upload$meta()$analysisType)
-  )
+  # filter <- filterServer(
+  #   "filterID",
+  #   data          = reactive(upload$data()),
+  #   abundance     = reactive(upload$abundance()),
+  #   samples       = reactive(upload$samples()),
+  #   metada        = reactive(upload$metadata()),
+  #   analysis_type = reactive(upload$meta()$analysisType)
+  # )
   
   is_amplicon <- reactive({
     req(upload$meta())
