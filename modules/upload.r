@@ -14,6 +14,9 @@ uploadUI <- function(id) {
     
     uiOutput(ns("file_inputs_ui")),
     
+    #optional metadat3a
+    fileInput(ns("metadata_file"), "Upload metadata file (optional)", multiple = FALSE),
+    
     uiOutput(ns("delimiter_ui")),
     
     checkboxInput(ns("header"), "First row is header", value = TRUE),
@@ -134,20 +137,47 @@ uploadServer <- function(id) {
       )
     })
     
+    loaded_metadata_df <- eventReactive(input$btn_load, {
+      if (is.null(input$metadata_file)) return(NULL)
+      read_files(input$metadata_file)
+    })
+    
+    loaded_meta_info <- eventReactive(input$btn_load, {
+      list(
+        analysisType   = input$analysis_type,
+        delimeter      = input$delimeter,
+        filename       = if (needs_abundance()) c(input$abundance_file$name, input$sample_files$name) else input$file$name,
+        metadata_file  = input$metadata_file$name
+      )
+    })
+    
     output$tables_ui <- renderUI({
+      tabs <- tagList()
+      
       if (needs_abundance()) {
         req(loaded_abundance(), loaded_samples())
-        tagList(
-          h4("Abundance"),
-          DTOutput(session$ns("abundance_tbl")),
-          tags$br(),
-          h4("Samples"),
-          DTOutput(session$ns("samples_tbl"))
+        tabs <- tagAppendChildren(tabs,
+                                  h4("Abundance"), DTOutput(session$ns("abundance_tbl")),
+                                  tags$br(),
+                                  h4("Samples"), DTOutput(session$ns("samples_tbl"))
         )
       } else {
         req(loaded_data())
-        DTOutput(session$ns("preview_tbl"))
+        tabs <- tagAppendChildren(tabs, 
+                                  h4("Data Preview"), DTOutput(session$ns("preview_tbl"))
+        )
       }
+      
+      # rodau tik jei ikelta ir buvo pridetas req (tai nepasileis su tusciu failu)
+      if (!is.null(loaded_metadata_df())) {
+        tabs <- tagAppendChildren(tabs,
+                                  tags$hr(),
+                                  h4("Metadata"), 
+                                  DTOutput(session$ns("metadata_tbl"))
+        )
+      }
+      
+      tabs
     })
     
     output$abundance_tbl <- renderDT({
@@ -165,12 +195,19 @@ uploadServer <- function(id) {
       datatable(loaded_data(), options = list(scrollX = TRUE, pageLength = 15), rownames = FALSE, filter = "top")
     })
     
+    output$metadata_tbl <- renderDT({
+      req(loaded_metadata_df())
+      datatable(loaded_metadata_df(), options = list(scrollX = TRUE, pageLength = 10), rownames = FALSE, filter = "top")
+    })
+    
     list(
       type      = reactive(input$analysis_type),
       abundance = loaded_abundance,
       samples   = loaded_samples,
       standard  = loaded_data,
       meta      = loaded_meta,
+      metadata  = loaded_metadata_df,
+      info      = loaded_meta_info,
       data      = loaded_data,
       files     = reactive({ 
         if (needs_abundance()) {

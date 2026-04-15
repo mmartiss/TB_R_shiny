@@ -18,6 +18,7 @@ server <- function(input, output, session) {
     data          = reactive(upload$data()),
     abundance     = reactive(upload$abundance()),
     samples       = reactive(upload$samples()),
+    metada        = reactive(upload$metadata()),
     analysis_type = reactive(upload$meta()$analysisType)
   )
   

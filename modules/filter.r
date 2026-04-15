@@ -1,15 +1,3 @@
-# upload$data()        # original
-# ↓
-# filtered_data()      # remove/sort
-# ↓
-# filtered_result()    # + visi filtrai
-# ↓
-# [Use for analysis]
-# ↓
-# analysis_data()      # snapshot
-
-
-
 filterUI <- function(id) {
   ns <- NS(id)
   tagList(
@@ -18,7 +6,8 @@ filterUI <- function(id) {
   )
 }
 
-filterServer <- function(id, data, abundance = NULL, samples = NULL, analysis_type = NULL) {
+# Pridėtas metadata argumentas
+filterServer <- function(id, data, abundance = NULL, samples = NULL, analysis_type = NULL, metadata = NULL) {
   moduleServer(id, function(input, output, session) {
     
     is_amplicon <- reactive({
@@ -89,7 +78,7 @@ filterServer <- function(id, data, abundance = NULL, samples = NULL, analysis_ty
       df
     })
     
-    # ── Amplikon analizės logika (16s / ITS) ───────────────────────────────────
+    # ── Amplikon analizės logika (16s / ITS) + Metadata ────────────────────────
     
     make_amplicon_state <- function(suffix) {
       list(
@@ -98,8 +87,9 @@ filterServer <- function(id, data, abundance = NULL, samples = NULL, analysis_ty
       )
     }
     
-    ab_state  <- make_amplicon_state("ab")
-    smp_state <- make_amplicon_state("smp")
+    ab_state   <- make_amplicon_state("ab")
+    smp_state  <- make_amplicon_state("smp")
+    meta_state <- make_amplicon_state("meta") # Būsena metaduomenims
     
     observe({
       req(is_amplicon(), abundance())
@@ -109,6 +99,12 @@ filterServer <- function(id, data, abundance = NULL, samples = NULL, analysis_ty
     observe({
       req(is_amplicon(), samples())
       smp_state$data(samples())
+    })
+    
+    # Užkrauname metaduomenis į filtravimo būseną, jei jie egzistuoja
+    observe({
+      req(metadata())
+      meta_state$data(metadata())
     })
     
     make_amplicon_result <- function(state) {
@@ -128,8 +124,9 @@ filterServer <- function(id, data, abundance = NULL, samples = NULL, analysis_ty
       })
     }
     
-    ab_result  <- make_amplicon_result(ab_state)
-    smp_result <- make_amplicon_result(smp_state)
+    ab_result   <- make_amplicon_result(ab_state)
+    smp_result  <- make_amplicon_result(smp_state)
+    meta_result <- make_amplicon_result(meta_state) # Rezultatas metaduomenims
     
     make_panel_server <- function(suffix, state, original_data) {
       
@@ -220,14 +217,15 @@ filterServer <- function(id, data, abundance = NULL, samples = NULL, analysis_ty
           btn_id <- paste0("remove_filter_", suffix, "_", i)
           observeEvent(input[[btn_id]], {
             current <- state$filters()
-            if (length(current) >= i) { current <- current[-i]; state$filters(current) }
+            if (length(current) >= i) { current <- current[-i]; active_filters(current) }
           }, ignoreInit = TRUE)
         })
       })
     }
     
-    make_panel_server("ab",  ab_state,  abundance)
-    make_panel_server("smp", smp_state, samples)
+    make_panel_server("ab",   ab_state,   abundance)
+    make_panel_server("smp",  smp_state,  samples)
+    make_panel_server("meta", meta_state, metadata) # Paleidžiame serverį metaduomenims
     
     make_panel_ui <- function(suffix, title) {
       ns <- session$ns
@@ -287,60 +285,73 @@ filterServer <- function(id, data, abundance = NULL, samples = NULL, analysis_ty
       })
     }
     
-    make_panel_downloads("ab",  ab_result)
-    make_panel_downloads("smp", smp_result)
+    make_panel_downloads("ab",   ab_result)
+    make_panel_downloads("smp",  smp_result)
+    make_panel_downloads("meta", meta_result) # Įgaliname metaduomenų lentelę
     
-    # ── Bendras UI ─────────────────────────────────────────────────────────────
+    # ── Bendras UI su dinaminiu metaduomenų tikrinimu ────────────────────────────
     
     output$main_ui <- renderUI({
+      ui_list <- tagList()
+      
       if (is_amplicon()) {
-        tagList(
-          make_panel_ui("ab",  "Abundance"),
-          tags$hr(),
-          make_panel_ui("smp", "Samples")
+        ui_list <- tagAppendChildren(ui_list,
+                                     make_panel_ui("ab",  "Abundance"),
+                                     tags$hr(),
+                                     make_panel_ui("smp", "Samples")
         )
       } else {
         ns <- session$ns
-        tagList(
-          fluidRow(
-            column(4,
-                   tags$label("Remove columns"),
-                   uiOutput(ns("col_remove_ui")),
-                   actionButton(ns("btn_remove"), "Remove selected", class = "btn-danger btn-sm")
-            ),
-            column(4,
-                   tags$label("Sort by"),
-                   uiOutput(ns("col_sort_ui")),
-                   radioButtons(ns("sort_dir"), NULL,
-                                choices = c("Ascending" = "asc", "Descending" = "desc"), inline = TRUE),
-                   actionButton(ns("btn_sort"), "Sort", class = "btn-primary btn-sm")
-            ),
-            column(4,
-                   tags$label("Filter rows"),
-                   uiOutput(ns("col_filter_ui")),
-                   uiOutput(ns("filter_value_ui")),
-                   actionButton(ns("btn_filter"), "Filter", class = "btn-primary btn-sm")
-            ),
-            column(12,
-                   tags$label("Active filters"),
-                   uiOutput(ns("active_filters_ui"))
-            )
-          ),
-          br(),
-          fluidRow(
-            column(12,
-                   actionButton(ns("btn_reset"), "Reset all",        class = "btn-warning btn-sm"),
-                   downloadButton(ns("dl_csv"),  "Download CSV",     class = "btn-sm"),
-                   downloadButton(ns("dl_tsv"),  "Download TSV",     class = "btn-sm"),
-                   actionButton(ns("btn_use"),   "Use for analysis", class = "btn-success btn-sm")
-            )
-          ),
-          br(),
-          DTOutput(ns("filtered_tbl"))
+        ui_list <- tagAppendChildren(ui_list,
+                                     fluidRow(
+                                       column(4,
+                                              tags$label("Remove columns"),
+                                              uiOutput(ns("col_remove_ui")),
+                                              actionButton(ns("btn_remove"), "Remove selected", class = "btn-danger btn-sm")
+                                       ),
+                                       column(4,
+                                              tags$label("Sort by"),
+                                              uiOutput(ns("col_sort_ui")),
+                                              radioButtons(ns("sort_dir"), NULL,
+                                                           choices = c("Ascending" = "asc", "Descending" = "desc"), inline = TRUE),
+                                              actionButton(ns("btn_sort"), "Sort", class = "btn-primary btn-sm")
+                                       ),
+                                       column(4,
+                                              tags$label("Filter rows"),
+                                              uiOutput(ns("col_filter_ui")),
+                                              uiOutput(ns("filter_value_ui")),
+                                              actionButton(ns("btn_filter"), "Filter", class = "btn-primary btn-sm")
+                                       ),
+                                       column(12,
+                                              tags$label("Active filters"),
+                                              uiOutput(ns("active_filters_ui")))
+                                     ),
+                                     br(),
+                                     fluidRow(
+                                       column(12,
+                                              actionButton(ns("btn_reset"), "Reset all",        class = "btn-warning btn-sm"),
+                                              downloadButton(ns("dl_csv"),  "Download CSV",     class = "btn-sm"),
+                                              downloadButton(ns("dl_tsv"),  "Download TSV",     class = "btn-sm"),
+                                              actionButton(ns("btn_use"),   "Use for analysis", class = "btn-success btn-sm")
+                                       )
+                                     ),
+                                     br(),
+                                     DTOutput(ns("filtered_tbl"))
         )
       }
+      
+      # Papildoma sekcija metaduomenims, jei jie įkelti (veikia abiems tipams)
+      if (!is.null(metadata())) {
+        ui_list <- tagAppendChildren(ui_list,
+                                     tags$hr(),
+                                     make_panel_ui("meta", "Metadata")
+        )
+      }
+      
+      ui_list
     })
     
+    # (Likusios render funkcijos nepakeistos)
     output$col_remove_ui <- renderUI({
       req(!is_amplicon(), filtered_data())
       selectizeInput(session$ns("cols_remove"), NULL, choices = names(filtered_data()), multiple = TRUE)
@@ -386,24 +397,16 @@ filterServer <- function(id, data, abundance = NULL, samples = NULL, analysis_ty
       datatable(filtered_result(), options = list(scrollX = TRUE, pageLength = 15),
                 rownames = FALSE, filter = "top")
     })
-    output$dl_csv <- downloadHandler(
-      filename = function() paste0("data_", Sys.Date(), ".csv"),
-      content  = function(file) write.csv(filtered_result(), file, row.names = FALSE)
-    )
-    output$dl_tsv <- downloadHandler(
-      filename = function() paste0("data_", Sys.Date(), ".tsv"),
-      content  = function(file) write.table(filtered_result(), file, sep = "\t", row.names = FALSE)
-    )
-    
-    # ── Grąžinami duomenys ─────────────────────────────────────────────────────
-    
+
     list(
-      data       = filtered_result,
-      abundance  = ab_result,
-      samples    = smp_result,
-      btn_use    = reactive(input$btn_use),
-      btn_use_ab = reactive(input$btn_use_ab),
-      btn_use_smp= reactive(input$btn_use_smp)
+      data        = filtered_result,
+      abundance   = ab_result,
+      samples     = smp_result,
+      metadata    = meta_result, # metadata table
+      btn_use     = reactive(input$btn_use),
+      btn_use_ab  = reactive(input$btn_use_ab),
+      btn_use_smp = reactive(input$btn_use_smp),
+      btn_use_meta= reactive(input$btn_use_meta)
     )
   })
 }
