@@ -1,27 +1,42 @@
+options(shiny.maxRequestSize = 100 * 1024^2) 
+
 uploadUI <- function(id) {
   ns <- NS(id)
   tagList(
-    h2("File Upload"),
+    h2("Emu Data Upload (16S/ITS)"),
     
     tags$label("Analysis type"),
     selectInput(ns("analysis_type"), NULL,
                 choices = c(
-                  "16s"            = "16s",
+                  "16S"            = "16s",
                   "ITS"            = "its",
                   "Custom / Other" = "custom"
                 )),
     
-    uiOutput(ns("file_inputs_ui")),
+    conditionalPanel(
+      condition = sprintf("input['%s'] == '16s' || input['%s'] == 'its'", ns("analysis_type"), ns("analysis_type")),
+      wellPanel(
+        h4("Required Emu Files"),
+        fileInput(ns("abundance_file"), "1. Upload emu-combined-abundance", accept = ".tsv"),
+        fileInput(ns("counts_file"), "2. Upload emu-combined-counts", accept = ".tsv"),
+        fileInput(ns("taxonomy_file"), "3. Upload emu-combined-taxonomy", accept = ".tsv"),
+        hr(),
+        h4("Optional Files"),
+        fileInput(ns("tree_file"), "4. Upload phylogenetic tree (.nwk)", accept = ".nwk"),
+        fileInput(ns("metadata_file"), "5. Upload metadata file", 
+                  accept = c(".csv", ".tsv", ".txt", ".xlsx", ".xls"))
+      )
+    ),
     
-    #optional metadat3a
-    fileInput(ns("metadata_file"), "Upload metadata file (optional)", multiple = FALSE),
+    conditionalPanel(
+      condition = sprintf("input['%s'] == 'custom'", ns("analysis_type")),
+      fileInput(ns("custom_file"), "Choose files", multiple = TRUE)
+    ),
     
     uiOutput(ns("delimiter_ui")),
-    
     checkboxInput(ns("header"), "First row is header", value = TRUE),
-    checkboxInput(ns("stringsAsFactors"), "Strings as factors", value = FALSE),
     
-    actionButton(ns("btn_load"), "Load", class = "btn-primary"),
+    actionButton(ns("btn_load"), "Load Data", class = "btn-primary", icon = icon("upload")),
     
     uiOutput(ns("tables_ui"))
   )
@@ -29,156 +44,91 @@ uploadUI <- function(id) {
 
 uploadServer <- function(id) {
   moduleServer(id, function(input, output, session) {
-    
-    needs_abundance <- reactive({
-      input$analysis_type %in% c("16s", "its")
-    })
-    
-    output$file_inputs_ui <- renderUI({
-      if (needs_abundance()) {
-        tagList(
-          fileInput(session$ns("abundance_file"), "Upload abundance file", multiple = FALSE),
-          fileInput(session$ns("sample_files"), "Upload sample file(s) (required)", multiple = TRUE)
-        )
-      } else {
-        fileInput(session$ns("file"), "Choose files", multiple = TRUE)
-      }
-    })
-    
-    output$delimiter_ui <- renderUI({
-      file_uploaded <- if (needs_abundance()) input$abundance_file else input$file
-      req(file_uploaded)
-      
-      tagList(
-        tags$label("Delimiter"),
-        selectInput(session$ns("delimeter"), NULL,
-                    choices = c(
-                      "Tab (TSV)"    = "\t",
-                      "Comma (CSV)"  = ",",
-                      "Semicolon"    = ";",
-                      "Pipe"         = "|"
-                    ))
+    read_emu_file <- function(file_info) {
+      req(file_info)
+      sep <- if (is.null(input$delimeter)) "\t" else input$delimeter
+      read.delim(
+        file_info$datapath,
+        sep = sep,
+        header = input$header,
+        stringsAsFactors = FALSE,
+        check.names = FALSE
       )
-    })
-    
-    read_files <- function(files) {
-      sep <- if (is.null(input$delimeter)) "," else input$delimeter
-      
-      data_list <- lapply(seq_len(nrow(files)), function(i) {
-        read.delim(
-          files$datapath[i],
-          sep              = sep,
-          header           = input$header,
-          stringsAsFactors = input$stringsAsFactors
-        )
-      })
-      dplyr::bind_rows(data_list)
     }
     
-    loaded_abundance <- eventReactive(input$btn_load, {
-      req(needs_abundance(), input$abundance_file)
-      read_files(input$abundance_file)
-    })
-    
-    loaded_samples <- eventReactive(input$btn_load, {
-      req(needs_abundance(), input$sample_files)
-      read_files(input$sample_files)
-    })
-    
-    loaded_data <- eventReactive(input$btn_load, {
-      req(!needs_abundance(), input$file)
-      read_files(input$file)
-    })
-    
-    loaded_meta <- eventReactive(input$btn_load, {
-      list(
-        analysisType   = input$analysis_type,
-        delimeter      = input$delimeter,
-        filename       = if (needs_abundance()) c(input$abundance_file$name, input$sample_files$name) else input$file$name,
-        abundance_file = if (needs_abundance()) input$abundance_file$name else NULL,
-        sample_files   = if (needs_abundance()) input$sample_files$name else NULL
+    output$delimiter_ui <- renderUI({
+      tagList(
+        selectInput(session$ns("delimeter"), "Delimiter",
+                    choices = c("Tab (TSV)" = "\t", "Comma (CSV)" = ",", "Semicolon" = ";"))
       )
     })
     
-    loaded_metadata_df <- eventReactive(input$btn_load, {
+    loaded_abundance <- eventReactive(input$btn_load, { read_emu_file(input$abundance_file) })
+    loaded_counts    <- eventReactive(input$btn_load, { read_emu_file(input$counts_file) })
+    loaded_taxonomy  <- eventReactive(input$btn_load, { read_emu_file(input$taxonomy_file) })
+    loaded_metadata <- eventReactive(input$btn_load, {
       if (is.null(input$metadata_file)) return(NULL)
-      read_files(input$metadata_file)
+      
+      # Tikriname failo galūnę
+      ext <- tools::file_ext(input$metadata_file$name)
+      
+      if (ext %in% c("xlsx", "xls")) {
+        # Jei Excel - nuskaitome pirmą lapą (sheet = 1)
+        return(readxl::read_excel(input$metadata_file$datapath, sheet = 1))
+      } else {
+        # Jei ne Excel, nuskaitome kaip TSV/CSV
+        return(read_emu_file(input$metadata_file))
+      }
     })
-    
-    loaded_meta_info <- eventReactive(input$btn_load, {
-      list(
-        analysisType   = input$analysis_type,
-        delimeter      = input$delimeter,
-        filename       = if (needs_abundance()) c(input$abundance_file$name, input$sample_files$name) else input$file$name,
-        metadata_file  = input$metadata_file$name
-      )
+
+    loaded_tree <- eventReactive(input$btn_load, {
+      req(input$tree_file)
+      tryCatch({
+        # ape::read.tree nwk readina
+        ape::read.tree(input$tree_file$datapath)
+      }, error = function(e) {
+        showNotification("Error reading the tree file. Make sure it is in the correct Newick format.", type = "error")
+        return(NULL)
+      })
     })
     
     output$tables_ui <- renderUI({
-      tabs <- tagList()
-      
-      if (needs_abundance()) {
-        req(loaded_abundance(), loaded_samples())
-        tabs <- tagAppendChildren(tabs,
-                                  h4("Abundance"), DTOutput(session$ns("abundance_tbl")),
-                                  tags$br(),
-                                  h4("Samples"), DTOutput(session$ns("samples_tbl"))
-        )
-      } else {
-        req(loaded_data())
-        tabs <- tagAppendChildren(tabs, 
-                                  h4("Data Preview"), DTOutput(session$ns("preview_tbl"))
+      req(input$btn_load)
+      if (input$analysis_type %in% c("16s", "its")) {
+        tagList(
+          hr(),
+          tabsetPanel(
+            tabPanel("Abundance", DTOutput(session$ns("abundance_tbl"))),
+            tabPanel("Counts", DTOutput(session$ns("counts_tbl"))),
+            tabPanel("Taxonomy", DTOutput(session$ns("taxonomy_tbl"))),
+            tabPanel("Metadata", DTOutput(session$ns("metadata_tbl"))),
+            tabPanel("Tree Info", verbatimTextOutput(session$ns("tree_summary")))
+          )
         )
       }
-      
-      # rodau tik jei ikelta ir buvo pridetas req (tai nepasileis su tusciu failu)
-      if (!is.null(loaded_metadata_df())) {
-        tabs <- tagAppendChildren(tabs,
-                                  tags$hr(),
-                                  h4("Metadata"), 
-                                  DTOutput(session$ns("metadata_tbl"))
-        )
-      }
-      
-      tabs
     })
     
-    output$abundance_tbl <- renderDT({
-      req(loaded_abundance())
-      datatable(loaded_abundance(), options = list(scrollX = TRUE, pageLength = 15), rownames = FALSE, filter = "top")
+    output$tree_summary <- renderPrint({
+      req(loaded_tree())
+      cat("Phylogenetic tree loaded successfully!\n")
+      print(loaded_tree())
     })
     
-    output$samples_tbl <- renderDT({
-      req(loaded_samples())
-      datatable(loaded_samples(), options = list(scrollX = TRUE, pageLength = 15), rownames = FALSE, filter = "top")
+    output$abundance_tbl <- renderDT({ datatable(loaded_abundance(), options = list(scrollX = TRUE)) })
+    output$counts_tbl    <- renderDT({ datatable(loaded_counts(), options = list(scrollX = TRUE)) })
+    output$taxonomy_tbl  <- renderDT({ datatable(loaded_taxonomy(), options = list(scrollX = TRUE)) })
+    output$metadata_tbl  <- renderDT({ 
+      req(loaded_metadata())
+      datatable(loaded_metadata(), options = list(scrollX = TRUE)) 
     })
-    
-    output$preview_tbl <- renderDT({
-      req(loaded_data())
-      datatable(loaded_data(), options = list(scrollX = TRUE, pageLength = 15), rownames = FALSE, filter = "top")
-    })
-    
-    output$metadata_tbl <- renderDT({
-      req(loaded_metadata_df())
-      datatable(loaded_metadata_df(), options = list(scrollX = TRUE, pageLength = 10), rownames = FALSE, filter = "top")
-    })
-    
-    list(
+
+    return(list(
       type      = reactive(input$analysis_type),
       abundance = loaded_abundance,
-      samples   = loaded_samples,
-      standard  = loaded_data,
-      meta      = loaded_meta,
-      metadata  = loaded_metadata_df,
-      info      = loaded_meta_info,
-      data      = loaded_data,
-      files     = reactive({ 
-        if (needs_abundance()) {
-          input$sample_files
-        } else {
-          input$file 
-        }
-      })
-    )
+      counts    = loaded_counts,
+      taxonomy  = loaded_taxonomy,
+      metadata  = loaded_metadata,
+      tree      = loaded_tree  # phylo 
+    ))
   })
 }

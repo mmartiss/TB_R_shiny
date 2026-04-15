@@ -5,6 +5,8 @@ library(shinydashboard)
 library(shinyWidgets)
 library(DT)
 library(plotly)
+library(ape)
+library(readxl)
 
 source("modules/upload.r")
 source("modules/filter.r")
