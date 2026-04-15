@@ -6,9 +6,15 @@ server <- function(input, output, session) {
   # upload$meta
   upload <- uploadServer("uploadID")
   
-  ab_filtered <- filterServer("ab_filt", reactive(upload$abundance()))
-  counts_filtered <- filterServer("counts_filt", reactive(upload$counts()))
-  tax_filtered <- filterServer("tax_filt", reactive(upload$taxonomy()))
+  ab_filtered <- filterServer("ab_filt", 
+                              original_data = reactive(upload$abundance()), 
+                              tax_data = reactive(upload$taxonomy()))
+  
+  counts_filtered <- filterServer("counts_filt", 
+                                  original_data = reactive(upload$counts()), 
+                                  tax_data = reactive(upload$taxonomy()))
+  
+  tax_filtered <- filterServer("tax_filt", original_data = reactive(upload$taxonomy()))
   
   # pasileidzia, jei buvo paspaustas mygtukas "use for analysis"
   analysis_abundance <- eventReactive(ab_filtered$btn_use(), {

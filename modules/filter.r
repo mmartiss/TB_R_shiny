@@ -9,6 +9,9 @@ filterUI <- function(id, title = "Data Table") {
       column(3, tags$label("Filter rows"), uiOutput(ns("col_filter_ui")), uiOutput(ns("filter_value_ui")), actionButton(ns("btn_filter"), "Filter", class="btn-primary btn-sm"))
     ),
     br(),
+    # Mygtukas faktiniam stulpelio pridėjimui
+    uiOutput(ns("tax_join_ui")),
+    br(),
     tags$label("Active filters:"), uiOutput(ns("active_filters_ui")),
     br(),
     fluidRow(
@@ -24,7 +27,7 @@ filterUI <- function(id, title = "Data Table") {
   )
 }
 
-filterServer <- function(id, original_data) {
+filterServer <- function(id, original_data, tax_data = NULL) {
   moduleServer(id, function(input, output, session) {
     
     ns <- session$ns
@@ -32,11 +35,51 @@ filterServer <- function(id, original_data) {
     current_data   <- reactiveVal(NULL)
     active_filters <- reactiveVal(list())
     
+    has_tax_reactive <- !is.null(tax_data) && is.function(tax_data)
+    
     observe({
       req(original_data())
       current_data(original_data())
     })
     
+    output$tax_join_ui <- renderUI({
+      if (!has_tax_reactive) return(NULL)
+      req(tax_data())
+      actionButton(ns("btn_add_species"), "Add Species Column from Taxonomy", class="btn-info btn-sm", icon = icon("plus"))
+    })
+    
+    # FAKTINIS duomenų papildymas stulpeliu
+    observeEvent(input$btn_add_species, {
+      req(current_data(), tax_data())
+      df <- current_data()
+      tax <- tax_data()
+      
+      # Patikrinam, ar species jau yra, kad nepridėtume dublikatų
+      if ("species" %in% names(df)) {
+        showNotification("Species column already exists", type = "warning")
+        return()
+      }
+      
+      # Jungiame duomenis
+      df$tax_id <- as.character(df$tax_id)
+      tax$tax_id <- as.character(tax$tax_id)
+      
+      # Paimame tik tax_id ir species iš taksonomijos
+      tax_to_join <- tax[, c("tax_id", "species")]
+      
+      df_new <- dplyr::left_join(df, tax_to_join, by = "tax_id")
+      
+      # Perrikiuojame stulpelius: tax_id, species, tada visi kiti
+      all_cols <- names(df_new)
+      other_cols <- all_cols[!all_cols %in% c("tax_id", "species")]
+      df_new <- df_new[, c("tax_id", "species", other_cols), drop = FALSE]
+      
+      # ĮRAŠOME atgal į pagrindinę atmintį
+      current_data(df_new)
+      showNotification("Species column added to the table", type = "message")
+    })
+    
+    # Kadangi species dabar yra current_data(), visi UI elementai jį matys automatiškai
     output$col_remove_ui <- renderUI({
       req(current_data())
       selectizeInput(ns("cols_remove"), NULL, choices = names(current_data()), multiple = TRUE)
@@ -135,11 +178,13 @@ filterServer <- function(id, original_data) {
       })
     })
     
+    # Kadangi viską darome su current_data(), filtered_result() tampa labai paprastas
     filtered_result <- reactive({
-      req(current_data())
       df      <- current_data()
+      req(df)
       filters <- active_filters()
       for (f in filters) {
+        if (!f$col %in% names(df)) next
         col <- df[[f$col]]
         if (is.numeric(col)) {
           df <- df[!is.na(col) & col >= f$val[1] & col <= f$val[2], ]
