@@ -71,7 +71,4 @@ server <- function(input, output, session) {
     })
   )
   
-  
-  tbprofilerServer("tbID", files_info = upload$files, type = upload$type)
-  
 }

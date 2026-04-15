@@ -8,7 +8,6 @@ uploadUI <- function(id) {
                 choices = c(
                   "16s"            = "16s",
                   "ITS"            = "its",
-                  "TB-Profiler"    = "tbprofiler",
                   "Custom / Other" = "custom"
                 )),
     
@@ -47,55 +46,31 @@ uploadServer <- function(id) {
     })
     
     output$delimiter_ui <- renderUI({
-      if (needs_abundance()) {
-        first_name <- input$abundance_file$name[1]
-      } else {
-        first_name <- input$file$name[1]
-      }
-      req(first_name)
-      ext <- tools::file_ext(first_name)
+      file_uploaded <- if (needs_abundance()) input$abundance_file else input$file
+      req(file_uploaded)
       
-      if (ext != "json") {
-        tagList(
-          tags$label("Delimiter"),
-          selectInput(session$ns("delimeter"), NULL,
-                      choices = c(
-                        "Tab (TSV)"    = "\t",
-                        "Comma (CSV)"  = ",",
-                        "Semicolon"    = ";",
-                        "Pipe"         = "|"
-                      ))
-        )
-      }
+      tagList(
+        tags$label("Delimiter"),
+        selectInput(session$ns("delimeter"), NULL,
+                    choices = c(
+                      "Tab (TSV)"    = "\t",
+                      "Comma (CSV)"  = ",",
+                      "Semicolon"    = ";",
+                      "Pipe"         = "|"
+                    ))
+      )
     })
     
     read_files <- function(files) {
+      sep <- if (is.null(input$delimeter)) "," else input$delimeter
+      
       data_list <- lapply(seq_len(nrow(files)), function(i) {
-        path <- files$datapath[i]
-        ext  <- tools::file_ext(files$name[i])
-        
-        if (ext == "json") {
-          parsed <- jsonlite::fromJSON(path, flatten = FALSE)
-          if (is.data.frame(parsed)) {
-            df <- parsed
-          } else if (is.list(parsed)) {
-            scalars <- Filter(function(x) length(x) == 1, parsed)
-            df <- as.data.frame(scalars, stringsAsFactors = FALSE)
-          } else {
-            df <- data.frame()
-          }
-        } else {
-          sep <- if (is.null(input$delimeter)) "," else input$delimeter
-          df <- read.delim(
-            path,
-            sep              = sep,
-            header           = input$header,
-            stringsAsFactors = input$stringsAsFactors
-          )
-        }
-        
-        #df$source_file <- files$name[i]
-        df
+        read.delim(
+          files$datapath[i],
+          sep              = sep,
+          header           = input$header,
+          stringsAsFactors = input$stringsAsFactors
+        )
       })
       dplyr::bind_rows(data_list)
     }
@@ -111,20 +86,8 @@ uploadServer <- function(id) {
     })
     
     loaded_data <- eventReactive(input$btn_load, {
-      if (needs_abundance()) {
-        if (is.null(input$abundance_file)) {
-          showNotification("Upload abundance file", type = "error")
-          req(input$abundance_file)
-        }
-        if (is.null(input$sample_files)) {
-          showNotification("Upload sample file", type = "error")
-          req(input$sample_files)
-        }
-        NULL
-      } else {
-        req(input$file)
-        read_files(input$file)
-      }
+      req(!needs_abundance(), input$file)
+      read_files(input$file)
     })
     
     loaded_meta <- eventReactive(input$btn_load, {
