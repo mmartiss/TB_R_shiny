@@ -76,6 +76,11 @@ ampliconServer <- function(id, abundance, samples) {
       ab  <- abundance()
       smp <- samples()
       
+      names(ab) <- gsub("\\.fastq$", "", names(ab))
+      
+      #cia jei galunes butu ivairios
+      #names(ab) <- tools::file_path_sans_ext(names(ab))
+      
       if (!"tax_id" %in% names(ab) || !"tax_id" %in% names(smp)) {
         showNotification("Error: Both files must contain a 'tax_id' column for the merge.", type = "error")
         return(NULL)
