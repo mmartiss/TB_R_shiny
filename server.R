@@ -10,6 +10,23 @@ server <- function(input, output, session) {
   counts_filtered <- filterServer("counts_filt", reactive(upload$counts()))
   tax_filtered <- filterServer("tax_filt", reactive(upload$taxonomy()))
   
+  # pasileidzia, jei buvo paspaustas mygtukas "use for analysis"
+  analysis_abundance <- eventReactive(ab_filtered$btn_use(), {
+    req(ab_filtered$data())
+    ab_filtered$data()
+  })
+  
+  analysis_counts <- eventReactive(counts_filtered$btn_use(), {
+    req(counts_filtered$data())
+    counts_filtered$data()
+  })
+  
+  analysis_taxonomy <- eventReactive(tax_filtered$btn_use(), {
+    req(tax_filtered$data())
+    tax_filtered$data()
+  })
+  
+  
   #output$debug <- renderPrint({
   #  req(upload$abundance())
   #  upload$abundance()
@@ -26,53 +43,38 @@ server <- function(input, output, session) {
   #   analysis_type = reactive(upload$meta()$analysisType)
   # )
   
-  is_amplicon <- reactive({
-    req(upload$meta())
-    upload$meta()$analysisType %in% c("16s", "its")
-  })
-  
-  analysis_data <- eventReactive(filter$btn_use(), {
-    req(!is_amplicon(), filter$data())
-    filter$data()
-  })
-  
-  analysis_abundance <- eventReactive(filter$btn_use_ab(), {
-    req(is_amplicon(), filter$abundance())
-    filter$abundance()
-  })
-  
-  analysis_samples <- eventReactive(filter$btn_use_smp(), {
-    req(is_amplicon(), filter$samples())
-    filter$samples()
-  })
-  
-  amplicon <- ampliconServer(
-    "ampliconID",
-    abundance = reactive({
-      # Naudojame isTruthy, kad saugiai patikrintume, ar mygtukas egzistuoja ir ar paspaustas
-      btn_val <- filter$btn_use_ab()
-      
-      if (isTruthy(btn_val) && btn_val > 0) {
-        # Svarbu: req() sustabdys vykdymą, jei analysis_abundance dar nesukurtas
-        req(analysis_abundance())
-        return(analysis_abundance())
-      } else {
-        # Jei mygtukas nepaspaustas, naudojame pradinius duomenis
-        req(upload$abundance())
-        return(upload$abundance())
-      }
-    }),
-    samples = reactive({
-      btn_val <- filter$btn_use_smp()
-      
-      if (isTruthy(btn_val) && btn_val > 0) {
-        req(analysis_samples())
-        return(analysis_samples())
-      } else {
-        req(upload$samples())
-        return(upload$samples())
-      }
-    })
-  )
+  # is_amplicon <- reactive({
+  #   req(upload$meta())
+  #   upload$meta()$analysisType %in% c("16s", "its")
+  # })
+  # 
+  # amplicon <- ampliconServer(
+  #   "ampliconID",
+  #   abundance = reactive({
+  #     # Naudojame isTruthy, kad saugiai patikrintume, ar mygtukas egzistuoja ir ar paspaustas
+  #     btn_val <- filter$btn_use_ab()
+  #     
+  #     if (isTruthy(btn_val) && btn_val > 0) {
+  #       # Svarbu: req() sustabdys vykdymą, jei analysis_abundance dar nesukurtas
+  #       req(analysis_abundance())
+  #       return(analysis_abundance())
+  #     } else {
+  #       # Jei mygtukas nepaspaustas, naudojame pradinius duomenis
+  #       req(upload$abundance())
+  #       return(upload$abundance())
+  #     }
+  #   }),
+  #   samples = reactive({
+  #     btn_val <- filter$btn_use_smp()
+  #     
+  #     if (isTruthy(btn_val) && btn_val > 0) {
+  #       req(analysis_samples())
+  #       return(analysis_samples())
+  #     } else {
+  #       req(upload$samples())
+  #       return(upload$samples())
+  #     }
+  #   })
+  # )
   
 }
