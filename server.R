@@ -39,6 +39,31 @@ server <- function(input, output, session) {
     meta_filtered$data()
   })
   
+  final_abundance <- reactive({
+    if (isTruthy(ab_filtered$btn_use()) && ab_filtered$btn_use() > 0) {
+      req(analysis_abundance())
+    } else {
+      req(upload$abundance())
+    }
+  })
+  
+  final_taxonomy <- reactive({
+    if (isTruthy(tax_filtered$btn_use()) && tax_filtered$btn_use() > 0) {
+      req(analysis_taxonomy())
+    } else {
+      req(upload$taxonomy())
+    }
+  })
+  
+  
+  analysis_all <- list(
+    abundance = final_abundance,
+    taxonomy = final_taxonomy
+  )
+  
+  ampliconServer("amplicon_1", analysis_all)
+  
+  
   #output$debug <- renderPrint({
   #  req(upload$abundance())
   #  upload$abundance()

@@ -8,6 +8,8 @@ library(plotly)
 library(ape)
 library(readxl)
 library(writexl)
+library(tidyr)
+library(dplyr)
 
 source("modules/upload.r")
 source("modules/filter.r")

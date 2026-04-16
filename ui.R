@@ -47,7 +47,7 @@ ui <- dashboardPage(
         metadataFilterUI("meta_filt")
       ),
       tabItem(tabName = "amplicon",
-              ampliconUI("ampliconID")
+              ampliconUI("amplicon_1")
       )
     )
   ) 
