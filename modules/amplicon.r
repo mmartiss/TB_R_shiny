@@ -1,7 +1,9 @@
+# Reikalingos bibliotekos: shiny, dplyr, tidyr, plotly, vegan
+
 ampliconUI <- function(id) {
   ns <- NS(id)
   tagList(
-    h2("Amplicon Analysis (Relative Abundance)"),
+    h2("Amplicon Analysis"),
     fluidRow(
       column(3,
              tags$label("Taxonomic level"),
@@ -13,9 +15,11 @@ ampliconUI <- function(id) {
              tags$label("Top N taxa"),
              numericInput(ns("top_n"), NULL, value = 20, min = 5, max = 100, step = 5)
       ),
-      column(2,
-             tags$label("Min. abundance"),
-             numericInput(ns("min_abund"), NULL, value = 0.0001, min = 0, max = 1, step = 0.001)
+      column(2, 
+             tags$label("Alpha Metric"),
+             selectInput(ns("alpha_metric"), NULL, 
+                         choices = c("Shannon", "Simpson", "Observed"), 
+                         selected = "Shannon")
       ),
       column(2,
              tags$label("Color palette"),
@@ -25,15 +29,58 @@ ampliconUI <- function(id) {
       ),
       column(3,
              tags$br(),
-             actionButton(ns("btn_generate"), "Update Plots", class = "btn-success w-100")
+             actionButton(ns("btn_generate"), "Update Analysis", class = "btn-success w-100")
       )
     ),
     hr(),
-    uiOutput(ns("color_editor_ui")),
-    hr(),
     tabsetPanel(
-      tabPanel("Taxonomic Bar Chart", plotlyOutput(ns("plot_bar"), height = "600px")),
-      tabPanel("Relative Abundance Heatmap", plotlyOutput(ns("plot_heatmap"), height = "600px"))
+      tabPanel("Taxonomic Bar Chart", 
+               uiOutput(ns("color_editor_ui")),
+               plotlyOutput(ns("plot_bar"), height = "600px")),
+      
+      tabPanel("Heatmap", 
+               plotlyOutput(ns("plot_heatmap"), height = "600px")),
+      
+      # tabPanel("Alpha Diversity", 
+      #          plotlyOutput(ns("plot_alpha"), height = "500px")),
+      
+      tabPanel("Beta Diversity (PCoA)", 
+               plotlyOutput(ns("plot_beta"), height = "600px"))
+    ),
+    tabPanel("Alpha Diversity", 
+             fluidRow(
+               column(12,
+                      wellPanel(
+                        fluidRow(
+                          column(6,
+                                 checkboxGroupInput(
+                                   ns("alpha_metrics_sel"), 
+                                   "Select Metrics:",
+                                   choices = c(
+                                     "Observed (Unique)" = "Observed", 
+                                     "Shannon" = "Shannon", 
+                                     "Simpson" = "Simpson", 
+                                     "InvSimpson" = "InvSimpson"
+                                   ),
+                                   selected = c("Observed", "Shannon")
+                                 )
+                          ),
+                          column(6,
+                                 div(
+                                   style = "padding-top: 25px;",
+                                   helpText("The boxplot shows the distribution of all samples, while the dots show specific samples.")
+                                 )
+                          )
+                        )
+                      )
+               )
+             ),
+             
+             fluidRow(
+               column(12,
+                      plotlyOutput(ns("plot_alpha_multi"), height = "600px")
+               )
+             )
     )
   )
 }
@@ -52,7 +99,8 @@ ampliconServer <- function(id, data_res) {
     
     rv_colors <- reactiveValues(map = list())
     
-    prepared_data <- eventReactive(input$btn_generate, {
+    # --- PAGRINDINIS DUOMENŲ APDOROJIMAS ---
+    processed_counts <- eventReactive(input$btn_generate, {
       req(data_res$abundance, data_res$taxonomy)
       
       ab   <- data_res$abundance()
@@ -71,44 +119,59 @@ ampliconServer <- function(id, data_res) {
       # 3. Sutvarkome Unknowns
       merged[[level]][is.na(merged[[level]]) | merged[[level]] == "" | merged[[level]] == "unclassified"] <- "Unknown"
       
-      # 4. Agreguojame (Sumuojame rūšis į Genus/Family/t.t.)
-      long_df <- merged %>%
+      # 4. Agreguojame counts
+      long_counts <- merged %>%
         dplyr::select(dplyr::all_of(c(level, sample_cols))) %>%
-        tidyr::pivot_longer(cols = dplyr::all_of(sample_cols), names_to = "sample", values_to = "abund") %>%
-        # Išvalome pavadinimus
+        tidyr::pivot_longer(cols = dplyr::all_of(sample_cols), names_to = "sample", values_to = "counts") %>%
         dplyr::mutate(sample = gsub("\\.fastq$|\\.fq$|\\.fastq\\.gz$|\\.fastq-threshold-.*$", "", sample)) %>%
-        # Grupuojame pagal mėginį ir pasirinktą lygį
         dplyr::group_by(sample, taxon = .data[[level]]) %>%
-        dplyr::summarise(abundance = sum(abund, na.rm = TRUE), .groups = "drop")
+        dplyr::summarise(counts = sum(counts, na.rm = TRUE), .groups = "drop")
       
-      # 5. Randame TOP N taksonus (pagal vidurkį visuose mėginiuose)
-      top_taxa <- long_df %>%
+      # --- FILTRAS: Pašaliname mėginius, kurie neturi jokių counts ---
+      valid_samples <- long_counts %>%
+        dplyr::group_by(sample) %>%
+        dplyr::summarise(total = sum(counts)) %>%
+        dplyr::filter(total > 0) %>%
+        dplyr::pull(sample)
+      
+      long_counts <- long_counts %>% dplyr::filter(sample %in% valid_samples)
+      
+      # 5. Paruošiame matricą vegan paketui
+      matrix_counts <- long_counts %>%
+        tidyr::pivot_wider(names_from = taxon, values_from = counts, values_fill = 0) %>%
+        tibble::column_to_rownames("sample")
+      
+      list(long = long_counts, matrix = matrix_counts)
+    })
+    
+    # Duomenys bar chart'ui (su "Other" grupavimu)
+    prepared_bar_data <- reactive({
+      req(processed_counts())
+      ld <- processed_counts()$long
+      
+      top_taxa <- ld %>%
         dplyr::group_by(taxon) %>%
-        dplyr::summarise(mean_val = mean(abundance)) %>%
+        dplyr::summarise(mean_val = mean(counts)) %>%
         dplyr::filter(taxon != "Unknown") %>%
         dplyr::arrange(desc(mean_val)) %>%
         dplyr::slice_head(n = input$top_n) %>%
         dplyr::pull(taxon)
       
-      # 6. Finalinis filtravimas: 
-      # Viskas, kas ne TOP N ir nesiekia min_abund, keliauja į "Other"
-      final_df <- long_df %>%
-        dplyr::mutate(taxon = ifelse(taxon %in% top_taxa & abundance >= input$min_abund, taxon, "Other")) %>%
+      final_df <- ld %>%
+        dplyr::mutate(taxon = ifelse(taxon %in% top_taxa, taxon, "Other")) %>%
         dplyr::group_by(sample, taxon) %>%
-        dplyr::summarise(rel_abund = sum(abundance), .groups = "drop")
-      
-      # 7. Užtikriname, kad stulpeliai būtų 100% (normalizacija po grupavimo)
-      final_df <- final_df %>%
+        dplyr::summarise(counts = sum(counts), .groups = "drop") %>%
         dplyr::group_by(sample) %>%
-        dplyr::mutate(rel_abund = rel_abund / sum(rel_abund)) %>%
+        dplyr::mutate(rel_abund = counts / sum(counts)) %>%
         dplyr::ungroup()
       
-      list(df = final_df, level = level)
+      final_df
     })
     
+    # --- SPALVŲ VALDYMAS ---
     observe({
-      req(prepared_data())
-      taxa <- unique(prepared_data()$df$taxon)
+      req(prepared_bar_data())
+      taxa <- unique(prepared_bar_data()$taxon)
       pal  <- PALETTES[[input$color_palette]]
       cols <- rep_len(pal, length(taxa))
       names(cols) <- taxa
@@ -120,65 +183,163 @@ ampliconServer <- function(id, data_res) {
     output$color_editor_ui <- renderUI({
       req(rv_colors$map)
       taxa <- names(rv_colors$map)
-      tags$div(style = "display:flex; flex-wrap:wrap; gap:10px; padding: 10px; background: #f9f9f9; border-radius: 5px;",
+      tags$div(style = "display:flex; flex-wrap:wrap; gap:10px; padding: 10px; background: #f9f9f9; border-bottom: 1px solid #ddd;",
                lapply(taxa, function(t) {
                  input_id <- paste0("col_", gsub("[^A-Za-z0-9]", "_", t))
-                 tags$div(style = "display:flex; align-items:center; gap:5px; border: 1px solid #ddd; padding: 2px 5px; border-radius: 3px;",
-                          tags$input(type = "color", 
-                                     value = rv_colors$map[[t]],
+                 tags$div(style = "display:flex; align-items:center; gap:5px;",
+                          tags$input(type = "color", value = rv_colors$map[[t]],
                                      onchange = sprintf("Shiny.setInputValue('%s', this.value)", ns(input_id)),
-                                     style="width:25px; height:25px; border:none; cursor:pointer;"),
-                          tags$span(t, style="font-size:11px; font-weight: bold;")
+                                     style="width:20px; height:20px; border:none;"),
+                          tags$span(t, style="font-size:10px;")
                  )
                })
       )
     })
     
-    observe({
-      req(rv_colors$map)
-      taxa <- names(rv_colors$map)
-      for (t in taxa) {
-        input_id <- paste0("col_", gsub("[^A-Za-z0-9]", "_", t))
-        val <- input[[input_id]]
-        if (!is.null(val)) {
-          rv_colors$map[[t]] <- val
-        }
-      }
+    # extra alpha
+    
+    # 1. Alpha diversity skaičiavimas
+    alpha_data <- reactive({
+      req(processed_counts())
+      mat <- processed_counts()$matrix
+      
+      # Skaičiuojame indeksus
+      df <- data.frame(
+        Sample = rownames(mat),
+        Observed = rowSums(mat > 0),
+        Shannon = vegan::diversity(mat, index = "shannon"),
+        Simpson = vegan::diversity(mat, index = "simpson"),
+        InvSimpson = vegan::diversity(mat, index = "invsimpson"),
+        check.names = FALSE
+      )
+      
+      df %>% tidyr::pivot_longer(cols = -Sample, names_to = "Metric", values_to = "Value")
     })
     
+    # 2. Alpha diversity grafikas
+    output$plot_alpha_multi <- renderPlotly({
+      req(alpha_data(), input$alpha_metrics_sel)
+      
+      df_filtered <- alpha_data() %>%
+        dplyr::filter(Metric %in% input$alpha_metrics_sel) %>%
+        # Pašaliname bet kokius NaN/Inf, jei tokių liko
+        dplyr::filter(!is.na(Value) & !is.infinite(Value))
+      
+      if(nrow(df_filtered) == 0) return(NULL)
+      
+      p <- suppressWarnings({
+        ggplot2::ggplot(df_filtered, ggplot2::aes(x = Metric, y = Value, fill = Metric)) +
+          ggplot2::geom_boxplot(alpha = 0.6, outlier.shape = NA) +
+          ggplot2::geom_jitter(ggplot2::aes(text = paste("Sample:", Sample, "<br>Value:", round(Value, 3))), 
+                               width = 0.15, size = 2, alpha = 0.7) +
+          ggplot2::facet_wrap(~Metric, scales = "free", nrow = 1) + 
+          ggplot2::theme_minimal() +
+          ggplot2::theme(
+            legend.position = "none",
+            panel.spacing = ggplot2::unit(1, "lines"), # Kiek padidinau tarpą
+            axis.title.x = ggplot2::element_blank(),
+            axis.text.x = ggplot2::element_blank(),
+            strip.background = ggplot2::element_rect(fill = "#f0f0f0", color = NA),
+            strip.text = ggplot2::element_text(face = "bold")
+          ) +
+          ggplot2::scale_fill_brewer(palette = "Set2")
+      })
+      
+      plotly::ggplotly(p, tooltip = "text") %>%
+        plotly::layout(margin = list(t = 40, b = 20, l = 40, r = 10))
+    })
+    
+    # --- ALPHA DIVERSITY ---
+    # output$plot_alpha <- renderPlotly({
+    #   req(processed_counts())
+    #   mat <- processed_counts()$matrix
+    #   
+    #   alpha_df <- data.frame(sample = rownames(mat))
+    #   
+    #   if (input$alpha_metric == "Shannon") {
+    #     alpha_df$value <- vegan::diversity(mat, index = "shannon")
+    #   } else if (input$alpha_metric == "Simpson") {
+    #     alpha_df$value <- vegan::diversity(mat, index = "simpson")
+    #   } else {
+    #     alpha_df$value <- rowSums(mat > 0)
+    #   }
+    #   
+    #   plotly::plot_ly(alpha_df, x = ~sample, y = ~value, type = "bar", marker = list(color = "#4E79A7")) %>%
+    #     plotly::layout(title = paste(input$alpha_metric, "Diversity Index"),
+    #                    xaxis = list(title = "Sample", tickangle = -45),
+    #                    yaxis = list(title = "Index Value"))
+    # })
+    
+    # --- BETA DIVERSITY (PCoA) ---
+    output$plot_beta <- renderPlotly({
+      req(processed_counts())
+      mat <- processed_counts()$matrix
+      
+      # Skaičiuojame atstumus ir PCoA
+      dist_mat <- vegan::vegdist(mat, method = "bray")
+      pcoa_res <- cmdscale(dist_mat, k = 2, eig = TRUE)
+      
+      pcoa_df <- data.frame(
+        sample = rownames(mat),
+        PC1 = pcoa_res$points[,1],
+        PC2 = pcoa_res$points[,2]
+      )
+      
+      var_exp <- round(pcoa_res$eig / sum(pcoa_res$eig) * 100, 1)
+      
+      plotly::plot_ly(pcoa_df, 
+                      x = ~PC1, 
+                      y = ~PC2, 
+                      # Suformuojame tekstą, kurį matysime užvedę pelę
+                      text = ~paste0("<b>Sample:</b> ", sample, 
+                                     "<br><b>PC1:</b> ", round(PC1, 3),
+                                     "<br><b>PC2:</b> ", round(PC2, 3)),
+                      type = "scatter", 
+                      mode = "markers",      # PAKEISTA: tik taškai, be teksto grafike
+                      hoverinfo = "text",    # PAKEISTA: naudoti tik 'text' lauko informaciją
+                      marker = list(size = 12, 
+                                    color = "#E15759",
+                                    line = list(color = "white", width = 1))) %>%
+        plotly::layout(title = "Beta Diversity (PCoA - Bray Curtis)",
+                       xaxis = list(title = paste0("PC1 (", var_exp[1], "%)")),
+                       yaxis = list(title = paste0("PC2 (", var_exp[2], "%)")),
+                       hovermode = "closest") # Užtikrina geresnį pelės sekimą
+    })
+    
+    # --- SENI GRAFIKAI (Bar & Heatmap) ---
     output$plot_bar <- renderPlotly({
-      req(prepared_data(), rv_colors$map)
-      df <- prepared_data()$df
+      req(prepared_bar_data(), rv_colors$map)
+      df <- prepared_bar_data()
       cols <- unlist(rv_colors$map)
-      
-      # Užtikriname taksonų eiliškumą, kad "Other" būtų apačioje arba viršuje
-      df$taxon <- factor(df$taxon, levels = names(cols))
-      
       plotly::plot_ly(df, x = ~sample, y = ~rel_abund, color = ~taxon, colors = cols,
-                      type = "bar", text = ~paste0(taxon, ": ", round(rel_abund*100, 2), "%"),
-                      hoverinfo = "text") %>%
-        plotly::layout(barmode = "stack",
-                       yaxis = list(title = "Relative Abundance", tickformat = ".0%"),
-                       xaxis = list(title = "Samples", tickangle = -45),
-                       showlegend = TRUE,
-                       margin = list(b = 100))
+                      type = "bar", hoverinfo = "text",
+                      text = ~paste0(taxon, ": ", round(rel_abund*100, 2), "%")) %>%
+        plotly::layout(barmode = "stack", yaxis = list(tickformat = ".0%"), xaxis = list(tickangle = -45))
     })
     
     output$plot_heatmap <- renderPlotly({
-      req(prepared_data())
-      df <- prepared_data()$df
+      req(processed_counts())
+      # Naudojame originalią matricą ir paverčiame į santykinę gausą
+      mat <- as.matrix(processed_counts()$matrix)
+      # Normalizuojame eilutes (mėginius), kad suma būtų 1
+      mat_rel <- sweep(mat, 1, rowSums(mat), "/")
       
-      mat_df <- df %>%
-        tidyr::pivot_wider(names_from = sample, values_from = rel_abund, values_fill = 0)
+      # Atrankome tik Top N taksonus, kad heatmap nebūtų per didelis
+      top_taxa_names <- names(sort(colMeans(mat_rel), decreasing = TRUE))[1:min(input$top_n, ncol(mat_rel))]
+      mat_plot <- t(mat_rel[, top_taxa_names, drop = FALSE]) # Transponuojame: Taxa = rows, Samples = cols
       
-      mat <- as.matrix(mat_df[,-1])
-      rownames(mat) <- mat_df$taxon
-      
-      plotly::plot_ly(x = colnames(mat), y = rownames(mat), z = mat, 
-                      type = "heatmap", colorscale = "Viridis") %>%
-        plotly::layout(xaxis = list(tickangle = -45), 
-                       yaxis = list(title = ""),
-                       margin = list(b = 100, l = 150))
+      plotly::plot_ly(
+        x = colnames(mat_plot), 
+        y = rownames(mat_plot), 
+        z = mat_plot, 
+        type = "heatmap", 
+        colorscale = "Viridis",
+        reversescale = FALSE
+      ) %>%
+        plotly::layout(
+          xaxis = list(tickangle = -45),
+          margin = list(b = 100, l = 150)
+        )
     })
   })
 }

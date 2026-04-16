@@ -47,6 +47,14 @@ server <- function(input, output, session) {
     }
   })
   
+  final_counts <- reactive({
+    if (isTruthy(counts_filtered$btn_use()) && counts_filtered$btn_use() > 0) {
+      req(analysis_counts())
+    } else {
+      req(upload$counts())
+    }
+  })
+  
   final_taxonomy <- reactive({
     if (isTruthy(tax_filtered$btn_use()) && tax_filtered$btn_use() > 0) {
       req(analysis_taxonomy())
@@ -55,10 +63,21 @@ server <- function(input, output, session) {
     }
   })
   
+  final_metadata <- reactive({
+    if (isTruthy(meta_filtered$btn_use()) && meta_filtered$btn_use() > 0) {
+      req(analysis_metadata())
+    } else {
+      req(upload$metadata())
+    }
+  })
+  
   
   analysis_all <- list(
     abundance = final_abundance,
-    taxonomy = final_taxonomy
+    counts = final_counts,
+    taxonomy = final_taxonomy,
+    meta = final_metadata,
+    tree = upload$tree
   )
   
   ampliconServer("amplicon_1", analysis_all)
