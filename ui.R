@@ -16,7 +16,8 @@ ui <- dashboardPage(
       menuItem("2. Abundance filtering", tabName = "abundance"),
       menuItem("3. Counts filtering", tabName = "counts"),
       menuItem("4. Taxonomy filtering", tabName = "taxonomy"),
-      menuItem("5. Amplicon", tabName = "amplicon")
+      menuItem("5. Metadata filtering", tabName = "metadata"),
+      menuItem("6. Amplicon", tabName = "amplicon")
     )
   ),
   #main
@@ -40,6 +41,10 @@ ui <- dashboardPage(
       tabItem(
         tabName = "taxonomy",
         filterUI("tax_filt", "Taxonomy Filtering")
+      ),
+      tabItem(
+        tabName = "metadata",
+        metadataFilterUI("meta_filt")
       ),
       tabItem(tabName = "amplicon",
               ampliconUI("ampliconID")

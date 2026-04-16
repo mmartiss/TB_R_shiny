@@ -16,6 +16,8 @@ server <- function(input, output, session) {
   
   tax_filtered <- filterServer("tax_filt", original_data = reactive(upload$taxonomy()))
   
+  meta_filtered   <- metadataFilterServer("meta_filt", reactive(upload$metadata()))
+  
   # pasileidzia, jei buvo paspaustas mygtukas "use for analysis"
   analysis_abundance <- eventReactive(ab_filtered$btn_use(), {
     req(ab_filtered$data())
@@ -31,7 +33,11 @@ server <- function(input, output, session) {
     req(tax_filtered$data())
     tax_filtered$data()
   })
-  
+
+  analysis_metadata <- eventReactive(meta_filtered$btn_use(), {
+    req(meta_filtered$data())
+    meta_filtered$data()
+  })
   
   #output$debug <- renderPrint({
   #  req(upload$abundance())

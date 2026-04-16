@@ -6,10 +6,11 @@ filterUI <- function(id, title = "Data Table") {
       column(3, tags$label("Remove columns"), uiOutput(ns("col_remove_ui")), actionButton(ns("btn_remove"), "Remove", class="btn-danger btn-sm")),
       column(3, tags$label("Sort by"), uiOutput(ns("col_sort_ui")), radioButtons(ns("sort_dir"), NULL, c("Asc"="asc","Desc"="desc"), inline=T), actionButton(ns("btn_sort"), "Sort", class="btn-primary btn-sm")),
       column(3, tags$label("Rename Column"), uiOutput(ns("col_rename_select_ui")), textInput(ns("new_col_name"), NULL, placeholder="New name"), actionButton(ns("btn_rename"), "Rename", class="btn-info btn-sm")),
+      column(3, tags$label("Batch Replace"), uiOutput(ns("replace_col_ui")), uiOutput(ns("replace_val_old_ui")), textInput(ns("replace_val_new"), NULL, placeholder="New value"), actionButton(ns("btn_replace"), "Replace All", class="btn-warning btn-sm")),
       column(3, tags$label("Filter rows"), uiOutput(ns("col_filter_ui")), uiOutput(ns("filter_value_ui")), actionButton(ns("btn_filter"), "Filter", class="btn-primary btn-sm"))
     ),
     br(),
-    # Mygtukas faktiniam stulpelio pridėjimui
+    # Mygtukas species pridejimui
     uiOutput(ns("tax_join_ui")),
     br(),
     tags$label("Active filters:"), uiOutput(ns("active_filters_ui")),
@@ -48,38 +49,53 @@ filterServer <- function(id, original_data, tax_data = NULL) {
       actionButton(ns("btn_add_species"), "Add Species Column from Taxonomy", class="btn-info btn-sm", icon = icon("plus"))
     })
     
-    # FAKTINIS duomenų papildymas stulpeliu
     observeEvent(input$btn_add_species, {
       req(current_data(), tax_data())
       df <- current_data()
       tax <- tax_data()
       
-      # Patikrinam, ar species jau yra, kad nepridėtume dublikatų
+      # check, jei jau yra species
       if ("species" %in% names(df)) {
         showNotification("Species column already exists", type = "warning")
         return()
       }
       
-      # Jungiame duomenis
       df$tax_id <- as.character(df$tax_id)
       tax$tax_id <- as.character(tax$tax_id)
-      
-      # Paimame tik tax_id ir species iš taksonomijos
+
       tax_to_join <- tax[, c("tax_id", "species")]
       
       df_new <- dplyr::left_join(df, tax_to_join, by = "tax_id")
-      
-      # Perrikiuojame stulpelius: tax_id, species, tada visi kiti
+
       all_cols <- names(df_new)
       other_cols <- all_cols[!all_cols %in% c("tax_id", "species")]
       df_new <- df_new[, c("tax_id", "species", other_cols), drop = FALSE]
-      
-      # ĮRAŠOME atgal į pagrindinę atmintį
+
       current_data(df_new)
       showNotification("Species column added to the table", type = "message")
     })
     
-    # Kadangi species dabar yra current_data(), visi UI elementai jį matys automatiškai
+    output$replace_col_ui <- renderUI({
+      selectInput(ns("replace_col"), NULL, choices = names(current_data()))
+    })
+    
+    output$replace_val_old_ui <- renderUI({
+      req(input$replace_col)
+      choices <- sort(unique(as.character(current_data()[[input$replace_col]])))
+      selectInput(ns("replace_val_old"), NULL, choices = choices)
+    })
+    
+    # Batch Replace Logika
+    observeEvent(input$btn_replace, {
+      req(input$replace_col, input$replace_val_old)
+      df <- current_data()
+      col <- input$replace_col
+      df[[col]][as.character(df[[col]]) == input$replace_val_old] <- input$replace_val_new
+      current_data(df)
+      showNotification(paste("Replaced all occurrences in", col))
+    })
+    
+    
     output$col_remove_ui <- renderUI({
       req(current_data())
       selectizeInput(ns("cols_remove"), NULL, choices = names(current_data()), multiple = TRUE)
@@ -177,8 +193,7 @@ filterServer <- function(id, original_data, tax_data = NULL) {
         }, ignoreInit = TRUE)
       })
     })
-    
-    # Kadangi viską darome su current_data(), filtered_result() tampa labai paprastas
+
     filtered_result <- reactive({
       df      <- current_data()
       req(df)

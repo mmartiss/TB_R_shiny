@@ -7,9 +7,11 @@ library(DT)
 library(plotly)
 library(ape)
 library(readxl)
+library(writexl)
 
 source("modules/upload.r")
 source("modules/filter.r")
+source("modules/metadataFilter.r")
 source("modules/amplicon.r")
 
 source("ui.r")
