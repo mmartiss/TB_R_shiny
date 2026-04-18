@@ -456,7 +456,7 @@ ampliconServer <- function(id, data_res) {
         
         # C. Sujungimas
         plotly::subplot(p_bar, p_tree, nrows = 2, heights = c(0.8, 0.2),
-                        shareX = FALSE, titleY = TRUE, margin = c(0.01, 0.01, 0.01, 0.07)) %>%
+                        shareX = FALSE, titleY = TRUE, margin = c(0.01, 0.01, 0.01, 0.08)) %>%
           plotly::layout(
             xaxis = list(         # barplot ašis (apačioje) – su pavadinimais
               tickangle = 90,
@@ -483,38 +483,120 @@ ampliconServer <- function(id, data_res) {
     })
     
     output$plot_heatmap <- renderPlotly({
-      req(processed_counts(), sample_order()); 
+      req(processed_counts(), sample_order())
       mat <- as.matrix(processed_counts()$matrix)
-      
-      # cat("=== HEATMAP DEBUG ===\n")
-      # cat("mat rownames:", paste(rownames(mat), collapse=", "), "\n")
-      # cat("sample_order:", paste(sample_order(), collapse=", "), "\n")
-      # cat("Dublikatai rownames:", paste(rownames(mat)[duplicated(rownames(mat))], collapse=", "), "\n")
       
       mat_rel <- sweep(mat, 1, rowSums(mat), "/")
       top_n_taxa <- names(sort(colMeans(mat_rel), decreasing = TRUE))[1:min(input$top_n, ncol(mat_rel))]
       
-      avail_samples <- intersect(sample_order(), rownames(mat_rel))
-      mat_plot <- t(mat_rel[avail_samples, top_n_taxa, drop = FALSE])
-      
-      plotly::plot_ly(
-        x = colnames(mat_plot),
-        y = rownames(mat_plot),
-        z = mat_plot,
-        type = "heatmap",
-        colorscale = "Viridis"
-      ) %>%
-        plotly::layout(
-          xaxis = list(
-            tickangle = -90,
-            tickmode = "array",
-            tickvals = avail_samples,
-            ticktext = avail_samples,
-            categoryorder = "array",
-            categoryarray = avail_samples
-          ),
-          margin = list(b = 150, l = 150)
-        )
+      if (input$sort_by != "dendro") {
+        # --- Paprastas atvejis (be dendrogramos) ---
+        avail_samples <- intersect(sample_order(), rownames(mat_rel))
+        mat_plot <- t(mat_rel[avail_samples, top_n_taxa, drop = FALSE])
+        
+        plotly::plot_ly(
+          x = colnames(mat_plot),
+          y = rownames(mat_plot),
+          z = mat_plot,
+          type = "heatmap",
+          colorscale = "Viridis"
+        ) %>%
+          plotly::layout(
+            xaxis = list(
+              tickangle = -90,
+              tickmode = "array",
+              tickvals = avail_samples,
+              ticktext = avail_samples,
+              categoryorder = "array",
+              categoryarray = avail_samples
+            ),
+            margin = list(b = 150, l = 150)
+          )
+        
+      } else {
+        # --- Dendrogramos atvejis ---
+        tryCatch({
+          # 1. Klasterizacija (ta pati logika kaip bar plote)
+          dist_mat <- vegan::vegdist(mat, method = input$beta_metric)
+          hc <- hclust(dist_mat, method = "ward.D2")
+          ordered_samples <- hc$labels[hc$order]
+          
+          # 2. Paruošiame matricą tinkama tvarka
+          avail_samples <- intersect(ordered_samples, rownames(mat_rel))
+          mat_plot <- t(mat_rel[avail_samples, top_n_taxa, drop = FALSE])
+          
+          # 3. Heatmap grafikas
+          p_heat <- plotly::plot_ly(
+            x = colnames(mat_plot),
+            y = rownames(mat_plot),
+            z = mat_plot,
+            type = "heatmap",
+            colorscale = "Viridis"
+          ) %>%
+            plotly::layout(
+              xaxis = list(
+                tickangle = -90,
+                tickmode = "array",
+                tickvals = avail_samples,
+                ticktext = avail_samples,
+                categoryorder = "array",
+                categoryarray = avail_samples,
+                title = ""
+              ),
+              yaxis = list(title = ""),
+              margin = list(b = 150, l = 150)
+            )
+          
+          # 4. Dendrograma (ta pati funkcija kaip bar plote)
+          p_tree <- create_dendro_plot(hc, avail_samples)
+          
+          # 5. Subplot: dendrograma viršuje, heatmap apačioje
+          plotly::subplot(
+            p_heat, p_tree,
+            nrows = 2,
+            heights = c(0.8, 0.2),
+            shareX = FALSE,
+            titleY = TRUE,
+            margin = c(0.01, 0.01, 0.01, 0.08)
+          ) %>%
+            plotly::layout(
+              xaxis2 = list(          # dendro ašis – be pavadinimų
+                showticklabels = FALSE,
+                categoryorder = "array",
+                categoryarray = avail_samples,
+                matches = "x2"
+              ),
+              xaxis = list(         # heatmap ašis – su pavadinimais
+                tickangle = -90,
+                tickmode = "array",
+                tickvals = avail_samples,
+                ticktext = avail_samples,
+                categoryorder = "array",
+                categoryarray = avail_samples
+              ),
+              margin = list(b = 150, l = 150)
+            )
+          
+        }, error = function(e) {
+          message("Heatmap dendrogram error: ", e)
+          # Fallback – paprastas heatmap be dendrogramos
+          avail_samples <- intersect(sample_order(), rownames(mat_rel))
+          mat_plot <- t(mat_rel[avail_samples, top_n_taxa, drop = FALSE])
+          
+          plotly::plot_ly(
+            x = colnames(mat_plot),
+            y = rownames(mat_plot),
+            z = mat_plot,
+            type = "heatmap",
+            colorscale = "Viridis"
+          ) %>%
+            plotly::layout(
+              title = "Dendrogram error – showing unsorted heatmap",
+              xaxis = list(tickangle = -90),
+              margin = list(b = 150, l = 150)
+            )
+        })
+      }
     })
   })
 }
