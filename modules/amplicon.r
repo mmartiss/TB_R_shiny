@@ -24,7 +24,8 @@ ampliconUI <- function(id) {
       column(3,
              tags$label("Sort Samples By"),
              selectInput(ns("sort_by"), NULL,
-                         choices = c("Alphabetical" = "alpha", 
+                         choices = c("Alphabetical" = "alpha",
+                                     "Dendrogram (Cluster Analysis)" = "dendro",
                                      "Shannon Diversity" = "Shannon",
                                      "Observed OTUs" = "Observed",
                                      "Bray-Curtis PCoA" = "bray", 
@@ -42,10 +43,10 @@ ampliconUI <- function(id) {
     tabsetPanel(
       tabPanel("Taxonomic Bar Chart", 
                uiOutput(ns("color_editor_ui")),
-               plotlyOutput(ns("plot_bar"), height = "600px")),
+               plotlyOutput(ns("plot_bar"), height = "800px")),
       
       tabPanel("Heatmap", 
-               plotlyOutput(ns("plot_heatmap"), height = "600px")),
+               plotlyOutput(ns("plot_heatmap"), height = "800px")),
       
       tabPanel("Alpha Diversity", 
                br(),
@@ -78,7 +79,6 @@ ampliconUI <- function(id) {
     )
   )
 }
-
 ampliconServer <- function(id, data_res) {
   moduleServer(id, function(input, output, session) {
     ns <- session$ns
@@ -119,7 +119,7 @@ ampliconServer <- function(id, data_res) {
       list(long = long_counts, matrix = matrix_counts)
     })
     
-    # --- RIKIAVIMO LOGIKA (PATAISYTA) ---
+    # --- RIKIAVIMO LOGIKA ---
     sample_order <- reactive({
       req(processed_counts(), input$sort_by)
       mat <- processed_counts()$matrix
@@ -127,21 +127,17 @@ ampliconServer <- function(id, data_res) {
       
       if (input$sort_by == "alpha") return(sort(all_samples))
       
-      # Alpha diversity rikiavimas
       if (input$sort_by %in% c("Shannon", "Observed")) {
         req(alpha_data())
         ord <- alpha_data() %>% 
           dplyr::filter(Metric == input$sort_by) %>% 
           dplyr::arrange(Value) %>% 
           dplyr::pull(Sample)
-        # Užtikriname, kad grąžiname tik tuos, kurie yra matricoje
         final_ord <- intersect(ord, all_samples)
-        missing <- setdiff(all_samples, final_ord)
-        return(c(final_ord, missing))
+        return(c(final_ord, setdiff(all_samples, final_ord)))
       }
       
-      # Beta diversity rikiavimas
-      metric <- input$sort_by
+      metric <- if(input$sort_by == "dendro") input$beta_metric else input$sort_by
       dist_mat <- NULL
       
       tryCatch({
@@ -149,13 +145,10 @@ ampliconServer <- function(id, data_res) {
           dist_mat <- vegan::vegdist(mat, method = metric, binary = (metric == "jaccard"))
         } else if (metric %in% c("unifrac", "wunifrac")) {
           req(data_res$tree(), data_res$abundance())
-          ab <- data_res$abundance()
-          tree_raw <- data_res$tree()
+          ab <- data_res$abundance(); tree_raw <- data_res$tree()
           common_ids <- intersect(as.character(ab$tax_id), as.character(tree_raw$tip.label))
+          if(length(common_ids) < 2) stop("Too few common taxa")
           
-          if(length(common_ids) < 2) stop("Too few common taxa for UniFrac")
-          
-          # Naudojame identišką pavadinimų trumpinimą kaip pagrindinėje matricoje
           sample_cols <- names(ab)[sapply(ab, is.numeric) & names(ab) != "tax_id"]
           mat_ids <- ab %>% 
             dplyr::filter(tax_id %in% common_ids) %>%
@@ -166,13 +159,9 @@ ampliconServer <- function(id, data_res) {
             tidyr::pivot_wider(names_from = tax_id, values_from = val, values_fill = 0) %>%
             tibble::column_to_rownames("sample") %>% as.matrix()
           
-          # Tikriname ar mat_ids turi bent kažkiek tų pačių mėginių
           mat_ids <- mat_ids[intersect(rownames(mat_ids), all_samples), , drop=FALSE]
-          if(nrow(mat_ids) < 2) stop("Too few samples after tree filtering")
-          
           curr_tree <- ape::keep.tip(tree_raw, colnames(mat_ids))
-          curr_tree <- phytools::midpoint.root(curr_tree)
-          curr_tree <- ape::multi2di(curr_tree)
+          curr_tree <- phytools::midpoint.root(curr_tree); curr_tree <- ape::multi2di(curr_tree)
           if (is.null(curr_tree$edge.length)) curr_tree$edge.length <- rep(0.001, nrow(curr_tree$edge))
           
           ps <- phyloseq::phyloseq(phyloseq::otu_table(mat_ids, taxa_are_rows = FALSE), phyloseq::phy_tree(curr_tree))
@@ -184,13 +173,15 @@ ampliconServer <- function(id, data_res) {
         }
         
         if (!is.null(dist_mat)) {
-          # PCoA PC1
-          pcoa_res <- cmdscale(dist_mat, k = 1)
-          ord <- rownames(pcoa_res)[order(pcoa_res[,1])]
-          # Saugiklis: pridedame mėginius, kurių nebuvo PCoA (pvz. dėl UniFrac filtravimo)
-          final_ord <- intersect(ord, all_samples)
-          missing <- setdiff(all_samples, final_ord)
-          return(c(final_ord, missing))
+          if (input$sort_by == "dendro") {
+            hc <- hclust(dist_mat, method = "ward.D2")
+            return(hc$labels[hc$order])
+          } else {
+            pcoa_res <- cmdscale(dist_mat, k = 1)
+            ord <- rownames(pcoa_res)[order(pcoa_res[,1])]
+            final_ord <- intersect(ord, all_samples)
+            return(c(final_ord, setdiff(all_samples, final_ord)))
+          }
         }
       }, error = function(e) {
         showNotification(paste("Sorting error:", e$message), type = "warning")
@@ -262,21 +253,31 @@ ampliconServer <- function(id, data_res) {
       req(processed_counts(), input$beta_metric)
       metric <- input$beta_metric
       
+      # 1. Jei tai paprasti metodai (Bray/Jaccard)
       if (!metric %in% c("unifrac", "wunifrac")) {
         mat <- processed_counts()$matrix
         dist_mat <- vegan::vegdist(mat, method = metric, binary = (metric == "jaccard"))
       } 
+      # 2. Jei tai UniFrac (reikia medžio)
       else {
         req(data_res$tree(), data_res$abundance())
         ab <- data_res$abundance()
         tree_raw <- data_res$tree()
+        
+        # Užtikrinam tipų sutapimą
         ab$tax_id <- as.character(ab$tax_id)
         tree_raw$tip.label <- as.character(tree_raw$tip.label)
+        
+        # Surandam bendrus ID
         common_ids <- intersect(ab$tax_id, tree_raw$tip.label)
+        if (length(common_ids) < 2) {
+          showNotification("Per mažai bendrų taksonų tarp medžio ir duomenų!", type = "error")
+          return(NULL)
+        }
         
-        if (length(common_ids) < 2) return(NULL)
-        
+        # Paruošiam matrica UniFrac skaičiavimui
         sample_cols <- names(ab)[sapply(ab, is.numeric) & names(ab) != "tax_id"]
+        
         mat_ids <- ab %>% 
           dplyr::filter(tax_id %in% common_ids) %>%
           tidyr::pivot_longer(cols = dplyr::all_of(sample_cols), names_to = "sample", values_to = "val") %>%
@@ -284,29 +285,65 @@ ampliconServer <- function(id, data_res) {
           dplyr::group_by(sample, tax_id) %>% 
           dplyr::summarise(val = sum(as.numeric(val), na.rm = TRUE), .groups = "drop") %>%
           tidyr::pivot_wider(names_from = tax_id, values_from = val, values_fill = 0) %>%
-          tibble::column_to_rownames("sample") %>% as.matrix()
+          tibble::column_to_rownames("sample") %>% 
+          as.matrix()
         
-        curr_tree <- ape::keep.tip(tree_raw, colnames(mat_ids))
-        curr_tree <- phytools::midpoint.root(curr_tree)
-        curr_tree <- ape::multi2di(curr_tree)
-        if (is.null(curr_tree$edge.length)) curr_tree$edge.length <- rep(0.001, nrow(curr_tree$edge))
-        
-        ps <- phyloseq::phyloseq(phyloseq::otu_table(mat_ids, taxa_are_rows = FALSE), phyloseq::phy_tree(curr_tree))
-        dist_mat <- if (metric == "wunifrac") {
-          phyloseq::UniFrac(phyloseq::transform_sample_counts(ps, function(x) x / sum(x)), weighted = TRUE)
-        } else {
-          phyloseq::UniFrac(ps, weighted = FALSE)
+        # SVARBU: Pašalinam mėginius, kurie turi 0 reads po taksonų filtravimo
+        # Weighted UniFrac lūžta, jei mėginio suma yra 0
+        mat_ids <- mat_ids[rowSums(mat_ids) > 0, , drop = FALSE]
+        if (nrow(mat_ids) < 2) {
+          showNotification("Per mažai mėginių su duomenimis po filtravimo!", type = "warning")
+          return(NULL)
         }
+        
+        # Medžio paruošimas
+        curr_tree <- ape::keep.tip(tree_raw, colnames(mat_ids))
+        
+        # UniFrac BŪTINAI reikia šakninio medžio (Rooted tree)
+        if (!ape::is.rooted(curr_tree)) {
+          curr_tree <- phytools::midpoint.root(curr_tree)
+        }
+        
+        # Užtikrinam, kad medis neturi "multi-phy" (polytomies) ir turi briaunų ilgius
+        curr_tree <- ape::multi2di(curr_tree)
+        if (is.null(curr_tree$edge.length)) {
+          curr_tree$edge.length <- rep(0.001, nrow(curr_tree$edge))
+        } else {
+          curr_tree$edge.length[curr_tree$edge.length <= 0] <- 0.00001
+        }
+        
+        # Sukuriam phyloseq objektą
+        ps <- phyloseq::phyloseq(
+          phyloseq::otu_table(mat_ids, taxa_are_rows = FALSE), 
+          phyloseq::phy_tree(curr_tree)
+        )
+        
+        # Skaičiuojam atstumus
+        dist_mat <- tryCatch({
+          if (metric == "wunifrac") {
+            # Weighted UniFrac geriausia skaičiuoti ant proporcijų
+            ps_rel <- phyloseq::transform_sample_counts(ps, function(x) x / sum(x))
+            phyloseq::UniFrac(ps_rel, weighted = TRUE, normalized = TRUE)
+          } else {
+            phyloseq::UniFrac(ps, weighted = FALSE)
+          }
+        }, error = function(e) {
+          showNotification(paste("UniFrac klaida:", e$message), type = "error")
+          return(NULL)
+        })
       }
       
       req(dist_mat)
-      dist_m <- as.matrix(dist_mat)
-      pcoa_res <- cmdscale(as.dist(dist_m), k = 2, eig = TRUE, add = TRUE)
+      
+      # PCoA analizė
+      pcoa_res <- cmdscale(dist_mat, k = 2, eig = TRUE, add = TRUE)
       points <- as.data.frame(pcoa_res$points)
       df <- data.frame(Sample = rownames(points), PC1 = points[, 1], PC2 = points[, 2])
+      
       ev <- pcoa_res$eig
       ev[ev < 0] <- 0
       var_exp <- round(ev / sum(ev) * 100, 1)
+      
       list(df = df, var = var_exp)
     })
     
@@ -318,28 +355,166 @@ ampliconServer <- function(id, data_res) {
     })
     
     # --- BAR & HEATMAP ---
+    # --- PAGALBINĖS FUNKCIJOS (galima dėti už serverio ribų arba serverio pradžioje) ---
+    
+    # 1. Funkcija baziniam Barplot sukurti
+    create_base_barplot <- function(df, cols, sample_order = NULL) {
+      p <- plotly::plot_ly(
+        df, 
+        x = ~sample, 
+        y = ~rel_abund, 
+        color = ~taxon, 
+        colors = cols, 
+        type = "bar", 
+        showlegend = TRUE, 
+        hoverinfo = "text", 
+        text = ~paste0(taxon, ": ", round(rel_abund * 100, 2), "%")
+      ) %>% 
+        # GERAI - pataisyta
+        plotly::layout(
+          barmode = "stack",
+          yaxis = list(title = "Relative Abundance", tickformat = ".0%"),
+          xaxis = list(
+            title = "",
+            tickangle = -90,
+            tickmode = "array",
+            tickvals = sample_order,
+            ticktext = sample_order,
+            categoryorder = "array",
+            categoryarray = sample_order
+          ),  
+          margin = list(b = 100)
+        )           
+      return(p)
+    }
+    
+    # 2. Funkcija dendrogramos braižymui
+    create_dendro_plot <- function(hc, ordered_samples) {
+      dendro_data <- ggdendro::dendro_data(hc)
+      seg <- dendro_data$segments
+      
+      # Vietoj skaičių (1, 2, 3) priskiriame tikrus pavadinimus pagal indeksą
+      seg$x_label <- ordered_samples[round(seg$x)]
+      seg$xend_label <- ordered_samples[round(seg$xend)]
+      
+      plotly::plot_ly() %>%
+        plotly::add_segments(
+          data = seg,
+          # Naudojame pavadinimus, o ne skaičius!
+          x = ~x_label, y = ~y, xend = ~xend_label, yend = ~yend,
+          line = list(color = "#444", width = 1.5),
+          showlegend = FALSE,
+          hoverinfo = "none"
+        ) %>%
+        plotly::layout(
+          xaxis = list(
+            type = "category", 
+            categoryorder = "array",
+            categoryarray = ordered_samples,
+            showticklabels = FALSE,
+            showgrid = FALSE,
+            title = ""
+          ),
+          yaxis = list(
+            autorange = "reversed",
+            zeroline = FALSE, 
+            showgrid = FALSE,
+            showticklabels = FALSE,
+            title = ""
+          )
+        )
+    }
+    
+    # --- SHINY OUTPUT ---
+    
     output$plot_bar <- renderPlotly({
-      req(prepared_bar_data(), rv_colors$map); df <- prepared_bar_data(); cols <- unlist(rv_colors$map)
-      plotly::plot_ly(df, x = ~sample, y = ~rel_abund, color = ~taxon, colors = cols, type = "bar", 
-                      hoverinfo = "text", text = ~paste0(taxon, ": ", round(rel_abund*100, 2), "%")) %>%
-        plotly::layout(barmode = "stack", yaxis = list(tickformat = ".0%"), xaxis = list(tickangle = -45))
+      req(prepared_bar_data(), rv_colors$map, sample_order())
+      
+      df <- prepared_bar_data()
+      cols <- unlist(rv_colors$map)
+
+      if (input$sort_by != "dendro") {
+        ord <- sample_order()        
+        df$sample <- factor(df$sample, levels = ord) 
+        return(create_base_barplot(df, cols, ord))
+      }
+      
+      # Dendrogramos atvejis
+      tryCatch({
+        # A. Skaičiavimai
+        mat <- processed_counts()$matrix
+        dist_mat <- vegan::vegdist(mat, method = input$beta_metric)
+        hc <- hclust(dist_mat, method = "ward.D2")
+        ordered_samples <- hc$labels[hc$order]
+        
+        # Paruošiam faktorius duomenyse
+        df$sample <- factor(df$sample, levels = ordered_samples)
+        
+        # B. Grafikų kūrimas
+        p_bar <- create_base_barplot(df, cols, ordered_samples)
+        p_tree <- create_dendro_plot(hc, ordered_samples)
+        
+        # C. Sujungimas
+        plotly::subplot(p_bar, p_tree, nrows = 2, heights = c(0.8, 0.2),
+                        shareX = FALSE, titleY = TRUE, margin = c(0.01, 0.01, 0.01, 0.07)) %>%
+          plotly::layout(
+            xaxis = list(         # barplot ašis (apačioje) – su pavadinimais
+              tickangle = 90,
+              tickmode = "array",
+              tickvals = ordered_samples,
+              ticktext = ordered_samples,
+              showticklabels = TRUE
+            ),
+            xaxis2 = list(        # dendro ašis – be pavadinimų
+              showticklabels = FALSE,
+              categoryorder = "array",
+              categoryarray = ordered_samples,
+              matches = "x"
+            ),
+            margin = list(b = 150)
+          )
+        
+      }, error = function(e) {
+        message("Dendrogram error: ", e)
+        # Fallback: jei dendrograma nepavyksta, braižom paprastą barplot
+        create_base_barplot(df, cols) %>% 
+          plotly::layout(title = "Dendrogram error - showing unsorted plot")
+      })
     })
     
     output$plot_heatmap <- renderPlotly({
       req(processed_counts(), sample_order()); 
       mat <- as.matrix(processed_counts()$matrix)
-      mat_rel <- sweep(mat, 1, rowSums(mat), "/")
       
+      # cat("=== HEATMAP DEBUG ===\n")
+      # cat("mat rownames:", paste(rownames(mat), collapse=", "), "\n")
+      # cat("sample_order:", paste(sample_order(), collapse=", "), "\n")
+      # cat("Dublikatai rownames:", paste(rownames(mat)[duplicated(rownames(mat))], collapse=", "), "\n")
+      
+      mat_rel <- sweep(mat, 1, rowSums(mat), "/")
       top_n_taxa <- names(sort(colMeans(mat_rel), decreasing = TRUE))[1:min(input$top_n, ncol(mat_rel))]
       
-      # Saugus rikiavimas: imam tik tuos, kurie egzistuoja matricoje
       avail_samples <- intersect(sample_order(), rownames(mat_rel))
       mat_plot <- t(mat_rel[avail_samples, top_n_taxa, drop = FALSE])
       
-      plotly::plot_ly(x = colnames(mat_plot), y = rownames(mat_plot), z = mat_plot, 
-                      type = "heatmap", colorscale = "Viridis") %>%
-        plotly::layout(xaxis = list(tickangle = -45, categoryorder = "array", categoryarray = avail_samples), 
-                       margin = list(b = 100, l = 150))
+      plotly::plot_ly(
+        x = colnames(mat_plot),
+        y = rownames(mat_plot),
+        z = mat_plot,
+        type = "heatmap",
+        colorscale = "Viridis"
+      ) %>%
+        plotly::layout(
+          xaxis = list(
+            tickangle = -90,
+            tickmode = "array",
+            tickvals = avail_samples,
+            ticktext = avail_samples,
+            categoryorder = "array",
+            categoryarray = avail_samples
+          ),
+          margin = list(b = 150, l = 150)
+        )
     })
   })
 }
