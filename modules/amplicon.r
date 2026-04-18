@@ -376,7 +376,7 @@ ampliconServer <- function(id, data_res) {
           yaxis = list(title = "Relative Abundance", tickformat = ".0%"),
           xaxis = list(
             title = "",
-            tickangle = -90,
+            tickangle = 90,
             tickmode = "array",
             tickvals = sample_order,
             ticktext = sample_order,
@@ -503,7 +503,7 @@ ampliconServer <- function(id, data_res) {
         ) %>%
           plotly::layout(
             xaxis = list(
-              tickangle = -90,
+              tickangle = 90,
               tickmode = "array",
               tickvals = avail_samples,
               ticktext = avail_samples,
@@ -535,7 +535,7 @@ ampliconServer <- function(id, data_res) {
           ) %>%
             plotly::layout(
               xaxis = list(
-                tickangle = -90,
+                tickangle = 90,
                 tickmode = "array",
                 tickvals = avail_samples,
                 ticktext = avail_samples,
@@ -564,10 +564,10 @@ ampliconServer <- function(id, data_res) {
                 showticklabels = FALSE,
                 categoryorder = "array",
                 categoryarray = avail_samples,
-                matches = "x2"
+                matches = "x"
               ),
               xaxis = list(         # heatmap ašis – su pavadinimais
-                tickangle = -90,
+                tickangle = 90,
                 tickmode = "array",
                 tickvals = avail_samples,
                 ticktext = avail_samples,
@@ -592,7 +592,7 @@ ampliconServer <- function(id, data_res) {
           ) %>%
             plotly::layout(
               title = "Dendrogram error – showing unsorted heatmap",
-              xaxis = list(tickangle = -90),
+              xaxis = list(tickangle = 90),
               margin = list(b = 150, l = 150)
             )
         })

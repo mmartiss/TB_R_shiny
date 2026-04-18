@@ -14,6 +14,7 @@ library(vegan)
 library(phyloseq)
 library(phytools)
 library(ggtree)
+library(ggdendro)
 
 source("modules/upload.r")
 source("modules/filter.r")
