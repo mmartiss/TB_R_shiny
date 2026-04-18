@@ -1,11 +1,11 @@
-# Reikalingos bibliotekos: shiny, dplyr, tidyr, plotly, vegan, phyloseq, ape
+# Reikalingos bibliotekos: shiny, dplyr, tidyr, plotly, vegan, phyloseq, ape, phytools
 
 ampliconUI <- function(id) {
   ns <- NS(id)
   tagList(
     h2("Amplicon Analysis"),
     fluidRow(
-      column(3,
+      column(2,
              tags$label("Taxonomic level"),
              selectInput(ns("tax_level"), NULL,
                          choices  = c("species", "genus", "family", "order", "class", "phylum"),
@@ -21,7 +21,19 @@ ampliconUI <- function(id) {
                          choices = c("Tableau 10", "Pastel", "Bold", "Viridis-disc", "Earth"),
                          selected = "Tableau 10")
       ),
-      column(5,
+      column(3,
+             tags$label("Sort Samples By"),
+             selectInput(ns("sort_by"), NULL,
+                         choices = c("Alphabetical" = "alpha", 
+                                     "Shannon Diversity" = "Shannon",
+                                     "Observed OTUs" = "Observed",
+                                     "Bray-Curtis PCoA" = "bray", 
+                                     "Jaccard PCoA" = "jaccard",
+                                     "Unweighted UniFrac PCoA" = "unifrac", 
+                                     "Weighted UniFrac PCoA" = "wunifrac"),
+                         selected = "alpha")
+      ),
+      column(3,
              tags$br(),
              actionButton(ns("btn_generate"), "Update All Analysis", class = "btn-success w-100")
       )
@@ -51,7 +63,7 @@ ampliconUI <- function(id) {
                br(),
                fluidRow(
                  column(4,
-                        selectInput(ns("beta_metric"), "Distance Metric:",
+                        selectInput(ns("beta_metric"), "Distance Metric (Plot only):",
                                     choices = c("Bray-Curtis" = "bray", 
                                                 "Jaccard (Binary)" = "jaccard",
                                                 "Unweighted UniFrac" = "unifrac", 
@@ -107,10 +119,99 @@ ampliconServer <- function(id, data_res) {
       list(long = long_counts, matrix = matrix_counts)
     })
     
+    # --- RIKIAVIMO LOGIKA (PATAISYTA) ---
+    sample_order <- reactive({
+      req(processed_counts(), input$sort_by)
+      mat <- processed_counts()$matrix
+      all_samples <- rownames(mat)
+      
+      if (input$sort_by == "alpha") return(sort(all_samples))
+      
+      # Alpha diversity rikiavimas
+      if (input$sort_by %in% c("Shannon", "Observed")) {
+        req(alpha_data())
+        ord <- alpha_data() %>% 
+          dplyr::filter(Metric == input$sort_by) %>% 
+          dplyr::arrange(Value) %>% 
+          dplyr::pull(Sample)
+        # Užtikriname, kad grąžiname tik tuos, kurie yra matricoje
+        final_ord <- intersect(ord, all_samples)
+        missing <- setdiff(all_samples, final_ord)
+        return(c(final_ord, missing))
+      }
+      
+      # Beta diversity rikiavimas
+      metric <- input$sort_by
+      dist_mat <- NULL
+      
+      tryCatch({
+        if (metric %in% c("bray", "jaccard")) {
+          dist_mat <- vegan::vegdist(mat, method = metric, binary = (metric == "jaccard"))
+        } else if (metric %in% c("unifrac", "wunifrac")) {
+          req(data_res$tree(), data_res$abundance())
+          ab <- data_res$abundance()
+          tree_raw <- data_res$tree()
+          common_ids <- intersect(as.character(ab$tax_id), as.character(tree_raw$tip.label))
+          
+          if(length(common_ids) < 2) stop("Too few common taxa for UniFrac")
+          
+          # Naudojame identišką pavadinimų trumpinimą kaip pagrindinėje matricoje
+          sample_cols <- names(ab)[sapply(ab, is.numeric) & names(ab) != "tax_id"]
+          mat_ids <- ab %>% 
+            dplyr::filter(tax_id %in% common_ids) %>%
+            tidyr::pivot_longer(cols = dplyr::all_of(sample_cols), names_to = "sample", values_to = "val") %>%
+            dplyr::mutate(sample = gsub("\\.fastq.*$|\\.fq.*$", "", sample)) %>% 
+            dplyr::group_by(sample, tax_id) %>% 
+            dplyr::summarise(val = sum(as.numeric(val), na.rm = TRUE), .groups = "drop") %>%
+            tidyr::pivot_wider(names_from = tax_id, values_from = val, values_fill = 0) %>%
+            tibble::column_to_rownames("sample") %>% as.matrix()
+          
+          # Tikriname ar mat_ids turi bent kažkiek tų pačių mėginių
+          mat_ids <- mat_ids[intersect(rownames(mat_ids), all_samples), , drop=FALSE]
+          if(nrow(mat_ids) < 2) stop("Too few samples after tree filtering")
+          
+          curr_tree <- ape::keep.tip(tree_raw, colnames(mat_ids))
+          curr_tree <- phytools::midpoint.root(curr_tree)
+          curr_tree <- ape::multi2di(curr_tree)
+          if (is.null(curr_tree$edge.length)) curr_tree$edge.length <- rep(0.001, nrow(curr_tree$edge))
+          
+          ps <- phyloseq::phyloseq(phyloseq::otu_table(mat_ids, taxa_are_rows = FALSE), phyloseq::phy_tree(curr_tree))
+          dist_mat <- if(metric == "wunifrac") {
+            phyloseq::UniFrac(phyloseq::transform_sample_counts(ps, function(x) x / sum(x)), weighted = TRUE)
+          } else {
+            phyloseq::UniFrac(ps, weighted = FALSE)
+          }
+        }
+        
+        if (!is.null(dist_mat)) {
+          # PCoA PC1
+          pcoa_res <- cmdscale(dist_mat, k = 1)
+          ord <- rownames(pcoa_res)[order(pcoa_res[,1])]
+          # Saugiklis: pridedame mėginius, kurių nebuvo PCoA (pvz. dėl UniFrac filtravimo)
+          final_ord <- intersect(ord, all_samples)
+          missing <- setdiff(all_samples, final_ord)
+          return(c(final_ord, missing))
+        }
+      }, error = function(e) {
+        showNotification(paste("Sorting error:", e$message), type = "warning")
+      })
+      
+      return(all_samples)
+    })
+    
     prepared_bar_data <- reactive({
-      req(processed_counts()); ld <- processed_counts()$long
+      req(processed_counts(), sample_order())
+      ld <- processed_counts()$long
       top_taxa <- ld %>% dplyr::group_by(taxon) %>% dplyr::summarise(m = mean(counts)) %>% dplyr::filter(taxon != "Unknown") %>% dplyr::arrange(desc(m)) %>% dplyr::slice_head(n = input$top_n) %>% dplyr::pull(taxon)
-      ld %>% dplyr::mutate(taxon = ifelse(taxon %in% top_taxa, taxon, "Other")) %>% dplyr::group_by(sample, taxon) %>% dplyr::summarise(counts = sum(counts), .groups = "drop") %>% dplyr::group_by(sample) %>% dplyr::mutate(rel_abund = counts / sum(counts)) %>% dplyr::ungroup()
+      
+      ld %>% 
+        dplyr::mutate(taxon = ifelse(taxon %in% top_taxa, taxon, "Other")) %>% 
+        dplyr::group_by(sample, taxon) %>% 
+        dplyr::summarise(counts = sum(counts), .groups = "drop") %>% 
+        dplyr::group_by(sample) %>% 
+        dplyr::mutate(rel_abund = counts / sum(counts)) %>% 
+        dplyr::ungroup() %>%
+        dplyr::mutate(sample = factor(sample, levels = sample_order()))
     })
     
     observe({
@@ -161,135 +262,84 @@ ampliconServer <- function(id, data_res) {
       req(processed_counts(), input$beta_metric)
       metric <- input$beta_metric
       
-      # 1. Standartiniai atstumai (Bray-Curtis, Jaccard ir kt.)
       if (!metric %in% c("unifrac", "wunifrac")) {
         mat <- processed_counts()$matrix
         dist_mat <- vegan::vegdist(mat, method = metric, binary = (metric == "jaccard"))
       } 
       else {
-        # 2. UniFrac skaičiavimas su patobulintu medžio paruošimu
         req(data_res$tree(), data_res$abundance())
-        
         ab <- data_res$abundance()
         tree_raw <- data_res$tree()
-        
-        # Užtikriname tipų sutapimą
         ab$tax_id <- as.character(ab$tax_id)
         tree_raw$tip.label <- as.character(tree_raw$tip.label)
-        
         common_ids <- intersect(ab$tax_id, tree_raw$tip.label)
         
-        if (length(common_ids) < 2) {
-          showNotification("UniFrac reikia bent 2 sutampančių taksonų tarp medžio ir lentelės.", type = "error")
-          return(NULL)
-        }
+        if (length(common_ids) < 2) return(NULL)
         
-        # Paruošiame duomenų matricą (filtruojame tik bendrus taksonus)
         sample_cols <- names(ab)[sapply(ab, is.numeric) & names(ab) != "tax_id"]
-        
         mat_ids <- ab %>% 
           dplyr::filter(tax_id %in% common_ids) %>%
           tidyr::pivot_longer(cols = dplyr::all_of(sample_cols), names_to = "sample", values_to = "val") %>%
-          # Jei reikia, čia paliekame pavadinimų trumpinimą:
-          dplyr::mutate(sample = gsub("\\.fastq.*$", "", sample)) %>% 
+          dplyr::mutate(sample = gsub("\\.fastq.*$|\\.fq.*$", "", sample)) %>% 
           dplyr::group_by(sample, tax_id) %>% 
           dplyr::summarise(val = sum(as.numeric(val), na.rm = TRUE), .groups = "drop") %>%
           tidyr::pivot_wider(names_from = tax_id, values_from = val, values_fill = 0) %>%
-          tibble::column_to_rownames("sample") %>% 
-          as.matrix()
+          tibble::column_to_rownames("sample") %>% as.matrix()
         
-        # Pašaliname tuščius mėginius (jei po filtravimo jų gausa tapo 0)
-        row_sums <- rowSums(mat_ids)
-        mat_ids <- mat_ids[row_sums > 0, , drop = FALSE]
-        
-        if (nrow(mat_ids) < 2) {
-          showNotification("Per mažai mėginių su duomenimis UniFrac analizei.", type = "warning")
-          return(NULL)
-        }
-        
-        # --- MEDŽIO APDOROJIMAS (iš tavo skripto) ---
         curr_tree <- ape::keep.tip(tree_raw, colnames(mat_ids))
-        
-        # Svarbiausias žingsnis: Midpoint Rooting ir binarizacija
         curr_tree <- phytools::midpoint.root(curr_tree)
         curr_tree <- ape::multi2di(curr_tree)
+        if (is.null(curr_tree$edge.length)) curr_tree$edge.length <- rep(0.001, nrow(curr_tree$edge))
         
-        # Šakų ilgių sutvarkymas
-        if (is.null(curr_tree$edge.length)) {
-          curr_tree$edge.length <- rep(0.001, nrow(curr_tree$edge))
+        ps <- phyloseq::phyloseq(phyloseq::otu_table(mat_ids, taxa_are_rows = FALSE), phyloseq::phy_tree(curr_tree))
+        dist_mat <- if (metric == "wunifrac") {
+          phyloseq::UniFrac(phyloseq::transform_sample_counts(ps, function(x) x / sum(x)), weighted = TRUE)
+        } else {
+          phyloseq::UniFrac(ps, weighted = FALSE)
         }
-        curr_tree$edge.length[is.na(curr_tree$edge.length) | curr_tree$edge.length <= 0] <- 0.001
-        
-        # Phyloseq objekto kūrimas
-        ps <- phyloseq(otu_table(mat_ids, taxa_are_rows = FALSE), phy_tree(curr_tree))
-        
-        # Skaičiuojame atstumus
-        dist_mat <- tryCatch({
-          if (metric == "wunifrac") {
-            # Weighted UniFrac: naudojame santykinę gausą (normalizaciją)
-            ps_rel <- phyloseq::transform_sample_counts(ps, function(x) x / sum(x))
-            phyloseq::UniFrac(ps_rel, weighted = TRUE, normalized = TRUE)
-          } else {
-            # Unweighted UniFrac
-            phyloseq::UniFrac(ps, weighted = FALSE)
-          }
-        }, error = function(e) {
-          showNotification(paste("UniFrac klaida:", e$message), type = "error")
-          return(NULL)
-        })
       }
       
       req(dist_mat)
       dist_m <- as.matrix(dist_mat)
-      
-      # Diagnostika: užpildome NA jei liko, nors po šių pataisymų jų neturėtų būti
-      dist_m[is.na(dist_m)] <- 0
-      
-      if (max(dist_m) == 0) {
-        showNotification("Visi mėginiai identiški (atstumas 0).", type = "warning")
-        return(NULL)
-      }
-      
-      # PCoA skaičiavimas
-      n_samples <- nrow(dist_m)
-      pcoa_res <- cmdscale(as.dist(dist_m), k = min(2, n_samples - 1), eig = TRUE, add = TRUE)
-      
+      pcoa_res <- cmdscale(as.dist(dist_m), k = 2, eig = TRUE, add = TRUE)
       points <- as.data.frame(pcoa_res$points)
-      df <- data.frame(Sample = rownames(points))
-      df$PC1 <- points[, 1]
-      df$PC2 <- if(ncol(points) >= 2) points[, 2] else 0
-      
-      # Variacijos skaičiavimas
+      df <- data.frame(Sample = rownames(points), PC1 = points[, 1], PC2 = points[, 2])
       ev <- pcoa_res$eig
       ev[ev < 0] <- 0
-      denom <- sum(ev)
-      var_exp <- if(denom > 0) round(ev / denom * 100, 1) else c(0, 0)
-      if (length(var_exp) < 2) var_exp <- c(var_exp, 0)
-      
+      var_exp <- round(ev / sum(ev) * 100, 1)
       list(df = df, var = var_exp)
     })
     
     output$plot_beta_multi <- renderPlotly({
       req(beta_res()); res <- beta_res()
-      plotly::plot_ly(res$df, x = ~PC1, y = ~PC2, text = ~paste0("<b>Sample:</b> ", Sample, "<br><b>PC1:</b> ", round(PC1, 3)),
-                      type = "scatter", mode = "markers", hoverinfo = "text", marker = list(size = 12, color = "#E15759", line = list(color = "white", width = 1))) %>%
-        plotly::layout(title = list(text = paste0("PCoA (", input$beta_metric, ")"), x = 0),
-                       xaxis = list(title = paste0("PC1 (", res$var[1], "%)")), yaxis = list(title = paste0("PC2 (", res$var[2], "%)")), hovermode = "closest")
+      plotly::plot_ly(res$df, x = ~PC1, y = ~PC2, text = ~paste0("<b>Sample:</b> ", Sample),
+                      type = "scatter", mode = "markers", marker = list(size = 12, color = "#E15759")) %>%
+        plotly::layout(xaxis = list(title = paste0("PC1 (", res$var[1], "%)")), yaxis = list(title = paste0("PC2 (", res$var[2], "%)")))
     })
     
     # --- BAR & HEATMAP ---
     output$plot_bar <- renderPlotly({
       req(prepared_bar_data(), rv_colors$map); df <- prepared_bar_data(); cols <- unlist(rv_colors$map)
-      plotly::plot_ly(df, x = ~sample, y = ~rel_abund, color = ~taxon, colors = cols, type = "bar", hoverinfo = "text", text = ~paste0(taxon, ": ", round(rel_abund*100, 2), "%")) %>%
+      plotly::plot_ly(df, x = ~sample, y = ~rel_abund, color = ~taxon, colors = cols, type = "bar", 
+                      hoverinfo = "text", text = ~paste0(taxon, ": ", round(rel_abund*100, 2), "%")) %>%
         plotly::layout(barmode = "stack", yaxis = list(tickformat = ".0%"), xaxis = list(tickangle = -45))
     })
     
     output$plot_heatmap <- renderPlotly({
-      req(processed_counts()); mat <- as.matrix(processed_counts()$matrix); mat_rel <- sweep(mat, 1, rowSums(mat), "/")
+      req(processed_counts(), sample_order()); 
+      mat <- as.matrix(processed_counts()$matrix)
+      mat_rel <- sweep(mat, 1, rowSums(mat), "/")
+      
       top_n_taxa <- names(sort(colMeans(mat_rel), decreasing = TRUE))[1:min(input$top_n, ncol(mat_rel))]
-      mat_plot <- t(mat_rel[, top_n_taxa, drop = FALSE])
-      plotly::plot_ly(x = colnames(mat_plot), y = rownames(mat_plot), z = mat_plot, type = "heatmap", colorscale = "Viridis") %>%
-        plotly::layout(xaxis = list(tickangle = -45), margin = list(b = 100, l = 150))
+      
+      # Saugus rikiavimas: imam tik tuos, kurie egzistuoja matricoje
+      avail_samples <- intersect(sample_order(), rownames(mat_rel))
+      mat_plot <- t(mat_rel[avail_samples, top_n_taxa, drop = FALSE])
+      
+      plotly::plot_ly(x = colnames(mat_plot), y = rownames(mat_plot), z = mat_plot, 
+                      type = "heatmap", colorscale = "Viridis") %>%
+        plotly::layout(xaxis = list(tickangle = -45, categoryorder = "array", categoryarray = avail_samples), 
+                       margin = list(b = 100, l = 150))
     })
   })
 }
