@@ -63,18 +63,28 @@ ampliconUI <- function(id) {
       tabPanel("Beta Diversity",
                br(),
                fluidRow(
-                 column(4,
-                        selectInput(ns("beta_metric"), "Distance Metric (Plot only):",
-                                    choices = c("Bray-Curtis" = "bray", 
-                                                "Jaccard (Binary)" = "jaccard",
-                                                "Unweighted UniFrac" = "unifrac", 
-                                                "Weighted UniFrac" = "wunifrac"),
-                                    selected = "bray")
+                 column(3,
+                        selectInput(ns("beta_metric"), "Distance Metric:",
+                                    choices = c("Bray-Curtis" = "bray", "Jaccard" = "jaccard",
+                                                "Unweighted UniFrac" = "unifrac", "Weighted UniFrac" = "wunifrac"),
+                                    selected = "bray"),
+                        hr(),
+                        selectInput(ns("beta_color_type"), "Color Samples By:",
+                                    choices = c("Uniform" = "none", "Metadata Category" = "meta", "Taxon Abundance" = "tax", "Dominant Taxon (Discrete Colors)" = "dominant")),
+                        uiOutput(ns("beta_color_var_ui")),
+                        hr(),
+                        # NAUJA: Biplot nustatymai
+                        checkboxInput(ns("beta_show_biplot"), "Show Taxa Influences (Biplot)", value = FALSE),
+                        conditionalPanel(
+                          condition = sprintf("input['%s'] == true", ns("beta_show_biplot")),
+                          numericInput(ns("beta_biplot_n"), "Number of Top Taxa:", value = 5, min = 1, max = 20)
+                        )
                  ),
-                 column(8, helpText("PCoA plot shows sample similarity. UniFrac requires a phylogenetic tree."))
-               ),
-               hr(),
-               plotlyOutput(ns("plot_beta_multi"), height = "600px")
+                 column(9, 
+                        helpText("PCoA plot shows sample similarity. UniFrac requires a phylogenetic tree."),
+                        plotlyOutput(ns("plot_beta_multi"), height = "600px")
+                 )
+               )
       ),
       tabPanel("Metadata Analysis",
                br(),
@@ -272,6 +282,59 @@ ampliconServer <- function(id, data_res) {
     })
     
     # --- BETA DIVERSITY ---
+    
+    # Pagalbinė funkcija mėginių sujungimui (įdėti serverio pradžioje)
+    get_merged_beta_data <- function(pcoa_df, meta_df) {
+      if (is.null(meta_df)) return(pcoa_df)
+      m <- as.data.frame(meta_df)
+      
+      # Ieškome, kur yra mėginių pavadinimai
+      # 1. Tikriname rownames
+      if (any(pcoa_df$Sample %in% rownames(m))) {
+        m$INTERNAL_ID <- rownames(m)
+      } else {
+        # 2. Tikriname kiekvieną stulpelį
+        found <- FALSE
+        for (col in names(m)) {
+          if (any(pcoa_df$Sample %in% as.character(m[[col]]))) {
+            m$INTERNAL_ID <- as.character(m[[col]])
+            found <- TRUE
+            break
+          }
+        }
+        if (!found) return(pcoa_df) # Jei neradom, grąžinam be metaduomenų
+      }
+      
+      dplyr::left_join(pcoa_df, m, by = c("Sample" = "INTERNAL_ID"))
+    }
+    
+    # Dinaminis UI spalvinimo kintamajam parinkti
+    output$beta_color_var_ui <- renderUI({
+      req(input$beta_color_type)
+      
+      if (input$beta_color_type == "meta") {
+        req(data_res$meta())
+        choices <- names(data_res$meta())
+        selectInput(ns("beta_color_meta"), "Select Metadata Column:", choices = choices)
+        
+      } else if (input$beta_color_type == "tax") {
+        req(processed_counts())
+        taxa_choices <- colnames(processed_counts()$matrix)
+        # NAUJA: multiple = TRUE ir parinktis "Pasirinkti visus" per placeholder/UI
+        selectizeInput(ns("beta_color_taxon"), "Select Taxon (or Taxa):", 
+                       choices = taxa_choices, 
+                       multiple = TRUE, # Leidžiame pasirinkti daug
+                       options = list(
+                         placeholder = 'Search and select one or more taxa...',
+                         maxOptions = 1000,
+                         plugins = list('remove_button') # Leidžia lengvai ištrinti pasirinkimą
+                       ))
+      } else {
+        NULL
+      }
+    })
+    
+    
     beta_res <- reactive({
       req(processed_counts(), input$beta_metric)
       metric <- input$beta_metric
@@ -371,10 +434,130 @@ ampliconServer <- function(id, data_res) {
     })
     
     output$plot_beta_multi <- renderPlotly({
-      req(beta_res()); res <- beta_res()
-      plotly::plot_ly(res$df, x = ~PC1, y = ~PC2, text = ~paste0("<b>Sample:</b> ", Sample),
-                      type = "scatter", mode = "markers", marker = list(size = 12, color = "#E15759")) %>%
-        plotly::layout(xaxis = list(title = paste0("PC1 (", res$var[1], "%)")), yaxis = list(title = paste0("PC2 (", res$var[2], "%)")))
+      req(beta_res())
+      res <- beta_res()
+      df <- res$df 
+      df <- get_merged_beta_data(df, data_res$meta())
+      
+      color_var <- NULL
+      color_label <- "Group"
+      hover_text <- paste0("<b>Sample:</b> ", df$Sample)
+      is_numeric_color <- FALSE
+      colors_to_use <- "Set1" # Default
+      
+      # --- 1. UNIFORM (Paprastas grafikas) ---
+      if (input$beta_color_type == "none") {
+        color_var <- rep("Sample", nrow(df))
+        colors_to_use <- "#E15759"
+        color_label <- "All Samples"
+      } 
+      
+      # --- 2. METADATA ---
+      else if (input$beta_color_type == "meta" && !is.null(input$beta_color_meta)) {
+        req(input$beta_color_meta %in% names(df))
+        color_var <- df[[input$beta_color_meta]]
+        color_label <- input$beta_color_meta
+      } 
+      
+      # --- 3. TAXON ABUNDANCE (Gradientas) ---
+      else if (input$beta_color_type == "tax" && !is.null(input$beta_color_taxon)) {
+        req(processed_counts())
+        mat <- processed_counts()$matrix
+        mat_rel <- sweep(mat, 1, rowSums(mat), "/") * 100
+        
+        selected_taxa <- input$beta_color_taxon
+        if (length(selected_taxa) > 0) {
+          if (length(selected_taxa) > 1) {
+            combined_abund <- rowSums(mat_rel[, selected_taxa, drop = FALSE])
+            color_label <- "Sum of Selected (%)"
+          } else {
+            combined_abund <- mat_rel[, selected_taxa]
+            color_label <- paste0(selected_taxa, " (%)")
+          }
+          
+          tax_abund <- data.frame(Sample = rownames(mat_rel), Abund = combined_abund)
+          df <- df %>% dplyr::left_join(tax_abund, by = "Sample")
+          color_var <- df$Abund
+          hover_text <- paste0(hover_text, "<br>Abundance: ", round(df$Abund, 2), "%")
+          is_numeric_color <- TRUE
+        }
+      }
+      
+      # --- 4. DOMINANT TAXON (Atskiros spalvos pagal rv_colors$map) ---
+      else if (input$beta_color_type == "dominant") {
+        req(processed_counts(), rv_colors$map)
+        mat <- processed_counts()$matrix
+        # Surandame dominantį taksoną kiekvienam mėginiui
+        dom_taxa <- colnames(mat)[apply(mat, 1, which.max)]
+        
+        # Tikriname, ar šie taksonai yra mūsų "Top N" (rv_colors$map)
+        # Jei ne, priskiriame "Other"
+        top_taxa_names <- names(rv_colors$map)
+        dom_taxa_final <- ifelse(dom_taxa %in% top_taxa_names, dom_taxa, "Other")
+        
+        tax_info <- data.frame(Sample = rownames(mat), Dominant = dom_taxa_final)
+        df <- df %>% dplyr::left_join(tax_info, by = "Sample")
+        
+        color_var <- df$Dominant
+        color_label <- "Dominant Taxon"
+        hover_text <- paste0(hover_text, "<br>Dominant: ", df$Dominant)
+        
+        # Svarbu: paimame spalvas iš jūsų rv_colors$map
+        colors_to_use <- unlist(rv_colors$map)
+      }
+      
+      # --- BRAIŽYMAS ---
+      p <- plotly::plot_ly()
+      
+      if (is_numeric_color) {
+        # Skaitinė skalė (Viridis)
+        p <- p %>% plotly::add_markers(
+          data = df, x = ~PC1, y = ~PC2, text = hover_text,
+          marker = list(size = 12, opacity = 0.8, color = color_var, 
+                        colorscale = "Viridis", showscale = TRUE,
+                        colorbar = list(title = color_label)),
+          showlegend = FALSE
+        )
+      } else {
+        # Diskrečios spalvos (Metadata arba Dominant Taxon)
+        p <- p %>% plotly::add_markers(
+          data = df, x = ~PC1, y = ~PC2, color = color_var, text = hover_text,
+          colors = colors_to_use, 
+          marker = list(size = 12, opacity = 0.8, line = list(color = "#fff", width = 1)),
+          showlegend = TRUE
+        )
+      }
+      
+      # Biplot (strėlės) - lieka toks pat
+      if (input$beta_show_biplot) {
+        req(processed_counts())
+        mat_rel <- sweep(as.matrix(processed_counts()$matrix), 1, rowSums(processed_counts()$matrix), "/")
+        common <- intersect(rownames(mat_rel), df$Sample)
+        mat_sub <- mat_rel[common, ]; df_sub <- df[match(common, df$Sample), ]
+        
+        taxa_pc1 <- colSums(mat_sub * df_sub$PC1) / colSums(mat_sub)
+        taxa_pc2 <- colSums(mat_sub * df_sub$PC2) / colSums(mat_sub)
+        
+        loadings <- data.frame(Taxon = colnames(mat_sub), PC1 = taxa_pc1, PC2 = taxa_pc2)
+        loadings$dist <- sqrt(loadings$PC1^2 + loadings$PC2^2)
+        top_taxa <- loadings %>% dplyr::arrange(desc(dist)) %>% head(input$beta_biplot_n)
+        
+        for(i in 1:nrow(top_taxa)) {
+          p <- p %>% plotly::add_segments(
+            x = 0, y = 0, xend = top_taxa$PC1[i], yend = top_taxa$PC2[i],
+            line = list(color = "black", width = 1), showlegend = FALSE, hoverinfo = "none"
+          ) %>% plotly::add_annotations(
+            x = top_taxa$PC1[i], y = top_taxa$PC2[i], text = top_taxa$Taxon[i],
+            showarrow = FALSE, font = list(color = "black", size = 10)
+          )
+        }
+      }
+      
+      p %>% plotly::layout(
+        xaxis = list(title = paste0("PC1 (", res$var[1], "%)")),
+        yaxis = list(title = paste0("PC2 (", res$var[2], "%)")),
+        legend = list(title = list(text = color_label))
+      )
     })
     
     # --- BAR & HEATMAP ---
