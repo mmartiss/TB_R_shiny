@@ -79,6 +79,7 @@ ampliconUI <- function(id) {
       tabPanel("Metadata Analysis",
                br(),
                fluidRow(
+                 # Suraskite "Metadata Analysis" skiltį savo ampliconUI funkcijoje
                  column(3,
                         wellPanel(
                           h4("Plot Settings"),
@@ -87,11 +88,14 @@ ampliconUI <- function(id) {
                           selectInput(ns("meta_facet_col"), "Facet Column (Optional):", choices = c("None" = ".")),
                           checkboxInput(ns("meta_show_points"), "Show individual samples", value = FALSE),
                           hr(),
-                          helpText("This will aggregate samples by selected metadata and calculate mean relative abundance.")
+                          # Štai čia atsiras dinaminiai filtrai
+                          uiOutput(ns("meta_val_filters_ui")),
+                          hr(),
+                          helpText("Choose which categories to include in the plot.")
                         )
                  ),
                  column(9,
-                        plotlyOutput(ns("plot_metadata_bar"), height = "700px")
+                        plotlyOutput(ns("plot_metadata_bar"), height = "1000px")
                  )
                )
       )
@@ -632,29 +636,47 @@ ampliconServer <- function(id, data_res) {
       updateSelectInput(session, "meta_facet_col", choices = c("None" = ".", meta_cols))
     })
     
+    # Sukuriam sąrašą stulpelių, kurie šiuo metu naudojami grafike
+    active_meta_cols <- reactive({
+      cols <- c(input$meta_x, input$meta_facet_row, input$meta_facet_col)
+      # Pašalinam tuščius ir vidinius ID stulpelius
+      unique(cols[cols != "." & cols != "INTERNAL_SAMPLE_ID"])
+    })
+    
+    # Generuojame filtrus pasirinktiems stulpeliams
+    output$meta_val_filters_ui <- renderUI({
+      req(active_meta_cols(), data_res$meta())
+      m <- as.data.frame(data_res$meta())
+      
+      tagList(
+        lapply(active_meta_cols(), function(col_name) {
+          # Paimam unikalias reikšmes iš stulpelio
+          vals <- sort(unique(as.character(m[[col_name]])))
+          
+          # Sukuriam ID filtrui (svarbu saugiai apdoroti pavadinimą)
+          clean_id <- paste0("filter_val_", gsub("[^A-Za-z0-9]", "_", col_name))
+          
+          selectizeInput(ns(clean_id), 
+                         label = paste("Keep in:", col_name),
+                         choices = vals, 
+                         selected = vals, # Pagal nutylėjimą pažymėta viskas
+                         multiple = TRUE,
+                         options = list(plugins = list('remove_button')))
+        })
+      )
+    })
+    
+    
     # --- DUOMENŲ PARUOŠIMAS GRAFIKUI (Saugus su visais simboliais) ---
     metadata_plot_data <- reactive({
       req(processed_counts(), data_res$meta, input$meta_x)
       m <- as.data.frame(data_res$meta())
       ld <- processed_counts()$long
       
-      # 1. Taksonomijos TOP N paruošimas
-      top_n <- input$top_n
-      top_taxa <- ld %>% 
-        dplyr::group_by(taxon) %>% 
-        dplyr::summarise(s = sum(counts, na.rm=T)) %>% 
-        dplyr::filter(taxon != "Unknown") %>% 
-        dplyr::arrange(desc(s)) %>% 
-        dplyr::slice_head(n = top_n) %>% 
-        dplyr::pull(taxon)
-      
-      ld <- ld %>% dplyr::mutate(taxon = ifelse(taxon %in% top_taxa, taxon, "Kitos"))
-      
-      # 2. Metaduomenų paruošimas su vidiniu ID
+      # 1. Taksonomijos ir Metaduomenų paruošimas (kaip anksčiau)
+      # ... [jūsų esamas ld ir meta_df paruošimas] ...
       meta_df <- m
-      meta_df$INTERNAL_SAMPLE_ID <- rownames(m) 
-      
-      # Bandom rasti stulpelį, kuris atitinka mėginių vardus
+      meta_df$INTERNAL_SAMPLE_ID <- rownames(m)
       for(col in names(m)) {
         if(any(ld$sample %in% as.character(m[[col]]))) {
           meta_df$INTERNAL_SAMPLE_ID <- as.character(m[[col]])
@@ -662,37 +684,50 @@ ampliconServer <- function(id, data_res) {
         }
       }
       
-      # 3. Sujungimas
       plot_df <- ld %>%
-        dplyr::inner_join(meta_df, by = c("sample" = "INTERNAL_SAMPLE_ID")) %>%
-        dplyr::group_by(sample) %>%
-        dplyr::mutate(rel_abund = counts / sum(counts, na.rm = TRUE)) %>%
-        dplyr::ungroup()
+        dplyr::inner_join(meta_df, by = c("sample" = "INTERNAL_SAMPLE_ID"))
       
-      # 4. Grupavimo logika
-      # Jei X ašis yra "INTERNAL_SAMPLE_ID" ARBA įjungta "Show individual samples"
+      # --- NAUJAS ŽINGSNIS: FILTRAVIMAS PAGAL REIKŠMES ---
+      for(col_name in active_meta_cols()) {
+        clean_id <- paste0("filter_val_", gsub("[^A-Za-z0-9]", "_", col_name))
+        selected_vals <- input[[clean_id]]
+        
+        # Jei vartotojas pasirinko specifines reikšmes, filtruojame
+        if (!is.null(selected_vals)) {
+          plot_df <- plot_df %>% dplyr::filter(.data[[col_name]] %in% selected_vals)
+        }
+      }
+      # --------------------------------------------------
+      
+      # 2. Skaičiavimas (rel_abund ir grupavimas kaip anksčiau)
+      # ... [tolimesnė jūsų skaičiavimo logika] ...
+      
+      # Galutinis skaičiavimas:
       if (input$meta_x == "INTERNAL_SAMPLE_ID" || input$meta_show_points) {
-        # Rodyti kiekvieną mėginį atskirai
+        # Individualūs mėginiai...
         group_vars <- c("sample", "taxon")
         if(input$meta_facet_row != ".") group_vars <- c(group_vars, input$meta_facet_row)
         if(input$meta_facet_col != ".") group_vars <- c(group_vars, input$meta_facet_col)
         
         final_df <- plot_df %>%
+          dplyr::group_by(sample) %>%
+          dplyr::mutate(rel_abund = counts / sum(counts, na.rm = TRUE)) %>%
           dplyr::group_by_at(group_vars) %>%
           dplyr::summarise(plot_value = sum(rel_abund), .groups = "drop") %>%
-          dplyr::rename(display_x = sample) # X ašyje bus mėginio vardas
+          dplyr::rename(display_x = sample)
       } else {
-        # Rodyti grupės vidurkį
+        # Grupės vidurkis...
         group_vars <- c(input$meta_x, "taxon")
         if(input$meta_facet_row != ".") group_vars <- c(group_vars, input$meta_facet_row)
         if(input$meta_facet_col != ".") group_vars <- c(group_vars, input$meta_facet_col)
         
         final_df <- plot_df %>%
+          dplyr::group_by(sample) %>%
+          dplyr::mutate(rel_abund = counts / sum(counts, na.rm = TRUE)) %>%
           dplyr::group_by_at(group_vars) %>%
           dplyr::summarise(plot_value = mean(rel_abund, na.rm = TRUE), .groups = "drop") %>%
-          dplyr::rename(display_x = !!sym(input$meta_x)) # X ašyje bus kategorija
+          dplyr::rename(display_x = !!sym(input$meta_x))
       }
-      
       final_df
     })
     
@@ -700,7 +735,17 @@ ampliconServer <- function(id, data_res) {
     output$plot_metadata_bar <- renderPlotly({
       req(metadata_plot_data(), rv_colors$map)
       df <- metadata_plot_data()
-      cols <- unlist(rv_colors$map)
+      
+      # 1. SVARBU: Pašaliname taksonus, kurių kiekis yra 0 arba kurie neegzistuoja šiame pogrupyje
+      df <- df %>% dplyr::filter(plot_value > 0)
+      
+      # Sutvarkome faktorių: paliekame tik tuos lygius, kurie realiai yra duomenyse
+      df$taxon <- factor(df$taxon, levels = intersect(names(rv_colors$map), unique(df$taxon)))
+      
+      # 2. Išfiltruojame spalvų žemėlapį: paimame spalvas tik tiems taksonams, kurie yra 'df'
+      all_cols <- unlist(rv_colors$map)
+      present_taxa <- as.character(unique(df$taxon))
+      cols <- all_cols[names(all_cols) %in% present_taxa]
       
       y_label <- if(input$meta_show_points) "Santykinis dažnis" else "Vidutinis santykinis dažnis"
       
@@ -708,23 +753,29 @@ ampliconServer <- function(id, data_res) {
         x = display_x, 
         y = plot_value, 
         fill = taxon,
+        # tooltip tekstas
         text = paste0("Mėginys/Grupė: ", display_x, "<br>Rūšis: ", taxon, "<br>Dalis: ", round(plot_value*100, 2), "%")
       )) +
         ggplot2::geom_bar(stat = "identity", position = "stack", width = 0.8) +
+        # Naudojame išfiltruotas spalvas
         ggplot2::scale_fill_manual(values = cols) +
-        ggplot2::labs(y = y_label, x = NULL) +
+        ggplot2::labs(y = y_label, x = NULL, fill = "Rūšis") +
         ggplot2::theme_bw() +
         ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 90, vjust = 0.5, size = 8))
       
-      # Saugus faceting
+      # Saugus faceting (lieka toks pat)
       if(input$meta_facet_row != "." || input$meta_facet_col != ".") {
         safe_row <- if(input$meta_facet_row == ".") "." else paste0("`", input$meta_facet_row, "`")
         safe_col <- if(input$meta_facet_col == ".") "." else paste0("`", input$meta_facet_col, "`")
         p <- p + ggplot2::facet_grid(as.formula(paste(safe_row, "~", safe_col)), scales = "free_x", space = "free_x")
       }
       
+      # Konvertuojame į plotly
       plotly::ggplotly(p, tooltip = "text") %>% 
-        plotly::layout(legend = list(orientation = "h", y = -0.3))
+        plotly::layout(
+          legend = list(orientation = "h", y = -0.3),
+          margin = list(b = 100)
+        )
     })
   })
 }
