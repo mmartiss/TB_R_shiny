@@ -75,6 +75,25 @@ ampliconUI <- function(id) {
                ),
                hr(),
                plotlyOutput(ns("plot_beta_multi"), height = "600px")
+      ),
+      tabPanel("Metadata Analysis",
+               br(),
+               fluidRow(
+                 column(3,
+                        wellPanel(
+                          h4("Plot Settings"),
+                          selectInput(ns("meta_x"), "X Axis (Category):", choices = NULL),
+                          selectInput(ns("meta_facet_row"), "Facet Row (Optional):", choices = c("None" = ".")),
+                          selectInput(ns("meta_facet_col"), "Facet Column (Optional):", choices = c("None" = ".")),
+                          checkboxInput(ns("meta_show_points"), "Show individual samples", value = FALSE),
+                          hr(),
+                          helpText("This will aggregate samples by selected metadata and calculate mean relative abundance.")
+                        )
+                 ),
+                 column(9,
+                        plotlyOutput(ns("plot_metadata_bar"), height = "700px")
+                 )
+               )
       )
     )
   )
@@ -597,6 +616,115 @@ ampliconServer <- function(id, data_res) {
             )
         })
       }
+    })
+    
+    # --- METADUOMENŲ STULPELIŲ ATNAUJINIMAS ---
+    observe({
+      req(data_res$meta)
+      m <- data_res$meta()
+      req(m)
+      
+      meta_cols <- names(m)
+      # Pridedame "Sample Name" kaip pirmą pasirinkimą
+      updateSelectInput(session, "meta_x", 
+                        choices = c("Sample Name" = "INTERNAL_SAMPLE_ID", meta_cols))
+      updateSelectInput(session, "meta_facet_row", choices = c("None" = ".", meta_cols))
+      updateSelectInput(session, "meta_facet_col", choices = c("None" = ".", meta_cols))
+    })
+    
+    # --- DUOMENŲ PARUOŠIMAS GRAFIKUI (Saugus su visais simboliais) ---
+    metadata_plot_data <- reactive({
+      req(processed_counts(), data_res$meta, input$meta_x)
+      m <- as.data.frame(data_res$meta())
+      ld <- processed_counts()$long
+      
+      # 1. Taksonomijos TOP N paruošimas
+      top_n <- input$top_n
+      top_taxa <- ld %>% 
+        dplyr::group_by(taxon) %>% 
+        dplyr::summarise(s = sum(counts, na.rm=T)) %>% 
+        dplyr::filter(taxon != "Unknown") %>% 
+        dplyr::arrange(desc(s)) %>% 
+        dplyr::slice_head(n = top_n) %>% 
+        dplyr::pull(taxon)
+      
+      ld <- ld %>% dplyr::mutate(taxon = ifelse(taxon %in% top_taxa, taxon, "Kitos"))
+      
+      # 2. Metaduomenų paruošimas su vidiniu ID
+      meta_df <- m
+      meta_df$INTERNAL_SAMPLE_ID <- rownames(m) 
+      
+      # Bandom rasti stulpelį, kuris atitinka mėginių vardus
+      for(col in names(m)) {
+        if(any(ld$sample %in% as.character(m[[col]]))) {
+          meta_df$INTERNAL_SAMPLE_ID <- as.character(m[[col]])
+          break
+        }
+      }
+      
+      # 3. Sujungimas
+      plot_df <- ld %>%
+        dplyr::inner_join(meta_df, by = c("sample" = "INTERNAL_SAMPLE_ID")) %>%
+        dplyr::group_by(sample) %>%
+        dplyr::mutate(rel_abund = counts / sum(counts, na.rm = TRUE)) %>%
+        dplyr::ungroup()
+      
+      # 4. Grupavimo logika
+      # Jei X ašis yra "INTERNAL_SAMPLE_ID" ARBA įjungta "Show individual samples"
+      if (input$meta_x == "INTERNAL_SAMPLE_ID" || input$meta_show_points) {
+        # Rodyti kiekvieną mėginį atskirai
+        group_vars <- c("sample", "taxon")
+        if(input$meta_facet_row != ".") group_vars <- c(group_vars, input$meta_facet_row)
+        if(input$meta_facet_col != ".") group_vars <- c(group_vars, input$meta_facet_col)
+        
+        final_df <- plot_df %>%
+          dplyr::group_by_at(group_vars) %>%
+          dplyr::summarise(plot_value = sum(rel_abund), .groups = "drop") %>%
+          dplyr::rename(display_x = sample) # X ašyje bus mėginio vardas
+      } else {
+        # Rodyti grupės vidurkį
+        group_vars <- c(input$meta_x, "taxon")
+        if(input$meta_facet_row != ".") group_vars <- c(group_vars, input$meta_facet_row)
+        if(input$meta_facet_col != ".") group_vars <- c(group_vars, input$meta_facet_col)
+        
+        final_df <- plot_df %>%
+          dplyr::group_by_at(group_vars) %>%
+          dplyr::summarise(plot_value = mean(rel_abund, na.rm = TRUE), .groups = "drop") %>%
+          dplyr::rename(display_x = !!sym(input$meta_x)) # X ašyje bus kategorija
+      }
+      
+      final_df
+    })
+    
+    # --- BRAIŽYMAS (Atsparus kableliams, tarpams ir brūkšneliams) ---
+    output$plot_metadata_bar <- renderPlotly({
+      req(metadata_plot_data(), rv_colors$map)
+      df <- metadata_plot_data()
+      cols <- unlist(rv_colors$map)
+      
+      y_label <- if(input$meta_show_points) "Santykinis dažnis" else "Vidutinis santykinis dažnis"
+      
+      p <- ggplot2::ggplot(df, ggplot2::aes(
+        x = display_x, 
+        y = plot_value, 
+        fill = taxon,
+        text = paste0("Mėginys/Grupė: ", display_x, "<br>Rūšis: ", taxon, "<br>Dalis: ", round(plot_value*100, 2), "%")
+      )) +
+        ggplot2::geom_bar(stat = "identity", position = "stack", width = 0.8) +
+        ggplot2::scale_fill_manual(values = cols) +
+        ggplot2::labs(y = y_label, x = NULL) +
+        ggplot2::theme_bw() +
+        ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 90, vjust = 0.5, size = 8))
+      
+      # Saugus faceting
+      if(input$meta_facet_row != "." || input$meta_facet_col != ".") {
+        safe_row <- if(input$meta_facet_row == ".") "." else paste0("`", input$meta_facet_row, "`")
+        safe_col <- if(input$meta_facet_col == ".") "." else paste0("`", input$meta_facet_col, "`")
+        p <- p + ggplot2::facet_grid(as.formula(paste(safe_row, "~", safe_col)), scales = "free_x", space = "free_x")
+      }
+      
+      plotly::ggplotly(p, tooltip = "text") %>% 
+        plotly::layout(legend = list(orientation = "h", y = -0.3))
     })
   })
 }
