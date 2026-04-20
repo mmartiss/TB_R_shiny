@@ -126,6 +126,10 @@ ampliconServer <- function(id, data_res) {
     
     rv_colors <- reactiveValues(map = list())
     
+    safe_meta <- reactive({
+      tryCatch(data_res$meta(), error = function(e) NULL)
+    })
+    
     # --- DUOMENŲ APDOROJIMAS ---
     processed_counts <- eventReactive(input$btn_generate, {
       req(data_res$abundance, data_res$taxonomy)
@@ -283,27 +287,44 @@ ampliconServer <- function(id, data_res) {
     
     # --- BETA DIVERSITY ---
     
+    observe({
+      m <- data_res$meta()
+      choices <- c("Uniform" = "none", "Taxon Abundance" = "tax", "Dominant Taxon (Discrete Colors)" = "dominant")
+      
+      # Jei metaduomenys egzistuoja, pridedame "Metadata Category"
+      if (!is.null(m) && ncol(m) > 0) {
+        choices <- c(choices, "Metadata Category" = "meta")
+      }
+      
+      updateSelectInput(session, "beta_color_type", choices = choices, 
+                        selected = isolate(input$beta_color_type))
+    })
+    
+    
     # Pagalbinė funkcija mėginių sujungimui (įdėti serverio pradžioje)
     get_merged_beta_data <- function(pcoa_df, meta_df) {
-      if (is.null(meta_df)) return(pcoa_df)
-      m <- as.data.frame(meta_df)
+      # Saugus patikrinimas: jei meta_df nėra arba jis neturi eilučių
+      if (is.null(meta_df) || inherits(meta_df, "try-error") || nrow(as.data.frame(meta_df)) == 0) {
+        return(pcoa_df)
+      }
       
-      # Ieškome, kur yra mėginių pavadinimai
-      # 1. Tikriname rownames
+      m <- as.data.frame(meta_df)
+      # Ieškome ID stulpelio
+      found_id <- NULL
       if (any(pcoa_df$Sample %in% rownames(m))) {
         m$INTERNAL_ID <- rownames(m)
+        found_id <- "INTERNAL_ID"
       } else {
-        # 2. Tikriname kiekvieną stulpelį
-        found <- FALSE
         for (col in names(m)) {
           if (any(pcoa_df$Sample %in% as.character(m[[col]]))) {
             m$INTERNAL_ID <- as.character(m[[col]])
-            found <- TRUE
+            found_id <- "INTERNAL_ID"
             break
           }
         }
-        if (!found) return(pcoa_df) # Jei neradom, grąžinam be metaduomenų
       }
+      
+      if (is.null(found_id)) return(pcoa_df)
       
       dplyr::left_join(pcoa_df, m, by = c("Sample" = "INTERNAL_ID"))
     }
@@ -437,72 +458,67 @@ ampliconServer <- function(id, data_res) {
       req(beta_res())
       res <- beta_res()
       df <- res$df 
-      df <- get_merged_beta_data(df, data_res$meta())
+      
+      # Naudojame saugų metaduomenų gavimą
+      m_data <- safe_meta()
+      df <- get_merged_beta_data(df, m_data)
       
       color_var <- NULL
-      color_label <- "Group"
+      color_label <- "Mėginiai"
       hover_text <- paste0("<b>Sample:</b> ", df$Sample)
       is_numeric_color <- FALSE
-      colors_to_use <- "Set1" # Default
+      colors_to_use <- "Set1" 
       
-      # --- 1. UNIFORM (Paprastas grafikas) ---
-      if (input$beta_color_type == "none") {
-        color_var <- rep("Sample", nrow(df))
-        colors_to_use <- "#E15759"
-        color_label <- "All Samples"
+      # Nustatome spalvinimo tipą
+      ctype <- input$beta_color_type
+      
+      # JEI PASIRINKTA META, BET JOS NĖRA - GRĮŽTAM Į 'NONE'
+      if (ctype == "meta" && (is.null(m_data) || is.null(input$beta_color_meta))) {
+        ctype <- "none"
+      }
+      
+      if (ctype == "none") {
+        color_var <- rep("Visi mėginiai", nrow(df))
+        colors_to_use <- "#4E79A7"
+        color_label <- "Grupė"
       } 
-      
-      # --- 2. METADATA ---
-      else if (input$beta_color_type == "meta" && !is.null(input$beta_color_meta)) {
-        req(input$beta_color_meta %in% names(df))
-        color_var <- df[[input$beta_color_meta]]
-        color_label <- input$beta_color_meta
+      else if (ctype == "meta") {
+        req(input$beta_color_meta) # Šis req sustabdys tik jei vartotojas ranka nieko nepasirinko dropdown'e
+        if (input$beta_color_meta %in% names(df)) {
+          color_var <- df[[input$beta_color_meta]]
+          color_label <- input$beta_color_meta
+        } else {
+          color_var <- rep("Visi mėginiai", nrow(df))
+        }
       } 
-      
-      # --- 3. TAXON ABUNDANCE (Gradientas) ---
-      else if (input$beta_color_type == "tax" && !is.null(input$beta_color_taxon)) {
-        req(processed_counts())
+      else if (ctype == "tax") {
+        req(input$beta_color_taxon)
         mat <- processed_counts()$matrix
         mat_rel <- sweep(mat, 1, rowSums(mat), "/") * 100
         
-        selected_taxa <- input$beta_color_taxon
-        if (length(selected_taxa) > 0) {
-          if (length(selected_taxa) > 1) {
-            combined_abund <- rowSums(mat_rel[, selected_taxa, drop = FALSE])
-            color_label <- "Sum of Selected (%)"
-          } else {
-            combined_abund <- mat_rel[, selected_taxa]
-            color_label <- paste0(selected_taxa, " (%)")
-          }
+        sel <- input$beta_color_taxon
+        if (length(sel) > 0) {
+          valid_sel <- intersect(sel, colnames(mat_rel))
+          combined_abund <- if(length(valid_sel) > 1) rowSums(mat_rel[, valid_sel]) else mat_rel[, valid_sel]
           
           tax_abund <- data.frame(Sample = rownames(mat_rel), Abund = combined_abund)
           df <- df %>% dplyr::left_join(tax_abund, by = "Sample")
           color_var <- df$Abund
-          hover_text <- paste0(hover_text, "<br>Abundance: ", round(df$Abund, 2), "%")
+          color_label <- "Abund. (%)"
           is_numeric_color <- TRUE
+          hover_text <- paste0(hover_text, "<br>Kiekis: ", round(df$Abund, 2), "%")
         }
       }
-      
-      # --- 4. DOMINANT TAXON (Atskiros spalvos pagal rv_colors$map) ---
-      else if (input$beta_color_type == "dominant") {
+      else if (ctype == "dominant") {
         req(processed_counts(), rv_colors$map)
         mat <- processed_counts()$matrix
-        # Surandame dominantį taksoną kiekvienam mėginiui
         dom_taxa <- colnames(mat)[apply(mat, 1, which.max)]
-        
-        # Tikriname, ar šie taksonai yra mūsų "Top N" (rv_colors$map)
-        # Jei ne, priskiriame "Other"
         top_taxa_names <- names(rv_colors$map)
         dom_taxa_final <- ifelse(dom_taxa %in% top_taxa_names, dom_taxa, "Other")
         
-        tax_info <- data.frame(Sample = rownames(mat), Dominant = dom_taxa_final)
-        df <- df %>% dplyr::left_join(tax_info, by = "Sample")
-        
+        df$Dominant <- dom_taxa_final[match(df$Sample, rownames(mat))]
         color_var <- df$Dominant
-        color_label <- "Dominant Taxon"
-        hover_text <- paste0(hover_text, "<br>Dominant: ", df$Dominant)
-        
-        # Svarbu: paimame spalvas iš jūsų rv_colors$map
+        color_label <- "Dominuojantis"
         colors_to_use <- unlist(rv_colors$map)
       }
       
@@ -510,21 +526,17 @@ ampliconServer <- function(id, data_res) {
       p <- plotly::plot_ly()
       
       if (is_numeric_color) {
-        # Skaitinė skalė (Viridis)
         p <- p %>% plotly::add_markers(
           data = df, x = ~PC1, y = ~PC2, text = hover_text,
           marker = list(size = 12, opacity = 0.8, color = color_var, 
                         colorscale = "Viridis", showscale = TRUE,
-                        colorbar = list(title = color_label)),
-          showlegend = FALSE
+                        colorbar = list(title = color_label))
         )
       } else {
-        # Diskrečios spalvos (Metadata arba Dominant Taxon)
         p <- p %>% plotly::add_markers(
           data = df, x = ~PC1, y = ~PC2, color = color_var, text = hover_text,
           colors = colors_to_use, 
-          marker = list(size = 12, opacity = 0.8, line = list(color = "#fff", width = 1)),
-          showlegend = TRUE
+          marker = list(size = 12, opacity = 0.8, line = list(color = "#fff", width = 1))
         )
       }
       
@@ -638,7 +650,7 @@ ampliconServer <- function(id, data_res) {
       
       df <- prepared_bar_data()
       cols <- unlist(rv_colors$map)
-
+      
       if (input$sort_by != "dendro") {
         ord <- sample_order()        
         df$sample <- factor(df$sample, levels = ord) 
