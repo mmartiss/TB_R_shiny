@@ -61,12 +61,20 @@ ampliconUI <- function(id) {
       tabPanel("Alpha Diversity", 
                br(),
                wellPanel(
-                 checkboxGroupInput(ns("alpha_metrics_sel"), "Select Metrics:",
-                                    choices = c("Observed (Unique)" = "Observed", 
-                                                "Shannon" = "Shannon", 
-                                                "Simpson" = "Simpson", 
-                                                "InvSimpson" = "InvSimpson"),
-                                    selected = c("Observed", "Shannon"), inline = TRUE)
+                 fluidRow(
+                   column(6,
+                          checkboxGroupInput(ns("alpha_metrics_sel"), "Select Metrics:",
+                                             choices = c("Observed (Unique)" = "Observed", 
+                                                         "Shannon" = "Shannon", 
+                                                         "Simpson" = "Simpson", 
+                                                         "InvSimpson" = "InvSimpson"),
+                                             selected = c("Observed", "Shannon"), inline = TRUE)
+                   ),
+                   column(6,
+                          uiOutput(ns("alpha_group_by_ui")),
+                          uiOutput(ns("alpha_group_filter_ui")) 
+                   )
+                 )
                ),
                plotlyOutput(ns("plot_alpha_multi"), height = "500px")),
       
@@ -292,26 +300,159 @@ ampliconServer <- function(id, data_res) {
     })
     
     # --- ALPHA DIVERSITY ---
+    
+    output$alpha_group_by_ui <- renderUI({
+      m <- safe_meta()
+      choices <- c("No Grouping" = "none")
+      if (!is.null(m) && ncol(m) > 0) {
+        choices <- c(choices, names(m))
+      }
+      selectInput(ns("alpha_group_by"), "Group By (Metadata):", choices = choices)
+    })
+    
+    # Generuojame filtrą konkrečioms reikšmėms parinkti
+    output$alpha_group_filter_ui <- renderUI({
+      req(input$alpha_group_by, input$alpha_group_by != "none")
+      m <- safe_meta()
+      req(m)
+      
+      # Paimame unikalias reikšmes iš pasirinkto stulpelio
+      col_name <- input$alpha_group_by
+      vals <- sort(unique(as.character(m[[col_name]])))
+      
+      selectizeInput(ns("alpha_group_subset"), 
+                     label = paste("Select values from", col_name, ":"),
+                     choices = vals, 
+                     selected = vals, # Pagal nutylėjimą pažymėtos visos
+                     multiple = TRUE,
+                     options = list(plugins = list('remove_button')))
+    })
+    
+    alpha_data_final <- reactive({
+      df <- alpha_data() # Čia tas pats df su InvSimpson gale ir metaduomenim
+      req(df)
+      
+      # 1. Nustatom bazinę grupę
+      if (is.null(input$alpha_group_by) || input$alpha_group_by == "none") {
+        df$Group <- "All Samples"
+      } else {
+        # Patikrinam ar stulpelis egzistuoja
+        if (input$alpha_group_by %in% names(df)) {
+          df$Group <- as.character(df[[input$alpha_group_by]])
+          
+          # 2. PRITAIKOM FILTRĄ (jei vartotojas pasirinko specifines reikšmes)
+          if (!is.null(input$alpha_group_subset)) {
+            df <- df %>% dplyr::filter(Group %in% input$alpha_group_subset)
+          }
+        } else {
+          df$Group <- "All Samples"
+        }
+      }
+      
+      # 3. Perskaičiuojam n=X po filtravimo
+      df <- df %>%
+        group_by(Metric, Group) %>%
+        mutate(n_count = n()) %>%
+        ungroup() %>%
+        mutate(Group_Label = paste0(Group, "\n(n=", n_count, ")"))
+      
+      df
+    })
+    
     alpha_data <- reactive({
-      req(processed_counts()); mat <- processed_counts()$matrix
-      data.frame(Sample = rownames(mat), Observed = rowSums(mat > 0), Shannon = vegan::diversity(mat, index = "shannon"),
-                 Simpson = vegan::diversity(mat, index = "simpson"), InvSimpson = vegan::diversity(mat, index = "invsimpson")) %>%
+      req(processed_counts())
+      
+      # 1. Pasiimam matrica ir užtikrinam, kad tai yra grynai skaitinė matrica
+      raw_mat <- processed_counts()$matrix
+      
+      # Pašalinam bet kokius ne skaitinius stulpelius, jei jie netyčia ten pateko
+      # ir paverčiam į paprastą data.frame (ne tibble)
+      mat_numeric <- as.data.frame(raw_mat)
+      mat_numeric <- mat_numeric[, sapply(mat_numeric, is.numeric), drop = FALSE]
+      
+      # Vegan reikalauja skaičių. Užtikrinam, kad viskas yra skaičiai:
+      mat_numeric <- as.matrix(mat_numeric)
+      
+      # 2. Skaičiuojam indeksus
+      # diversity() gražina vektorių, kurio pavadinimai (names) yra mėginių ID
+      shannon <- vegan::diversity(mat_numeric, index = "shannon")
+      simpson <- vegan::diversity(mat_numeric, index = "simpson")
+      invsimpson <- vegan::diversity(mat_numeric, index = "invsimpson")
+      observed <- rowSums(mat_numeric > 0)
+      
+      # 3. Sukuriam tvarkingą lentelę
+      df <- data.frame(
+        Sample = rownames(mat_numeric),
+        Observed = as.numeric(observed),
+        Shannon = as.numeric(shannon),
+        Simpson = as.numeric(simpson),
+        InvSimpson = as.numeric(invsimpson),
+        stringsAsFactors = FALSE
+      )
+      
+      # 4. Paverčiam į Long formatą analizei
+      df_long <- df %>%
         tidyr::pivot_longer(cols = -Sample, names_to = "Metric", values_to = "Value")
+      
+      # --- Rikiavimas (Užduotis: InvSimpson į galą) ---
+      metric_levels <- c("Observed", "Shannon", "Simpson", "InvSimpson")
+      df_long$Metric <- factor(df_long$Metric, levels = metric_levels)
+      
+      # 5. Metaduomenų prijungimas (Grupavimas)
+      m <- safe_meta()
+      # Tikrinam, ar metaduomenys egzistuoja ir ar pasirinktas grupavimas
+      if (!is.null(m) && !is.null(input$alpha_group_by) && input$alpha_group_by != "none") {
+        m_df <- as.data.frame(m)
+        
+        # Surandam, kuris stulpelis metaduomenyse sutampa su mėginių pavadinimais
+        m_df$INTERNAL_JOIN_ID <- NA
+        if (any(df_long$Sample %in% rownames(m_df))) {
+          m_df$INTERNAL_JOIN_ID <- rownames(m_df)
+        } else {
+          for(col in names(m_df)) {
+            if(any(df_long$Sample %in% as.character(m_df[[col]]))) {
+              m_df$INTERNAL_JOIN_ID <- as.character(m_df[[col]])
+              break
+            }
+          }
+        }
+        
+        # Jei radom jungtį, prijungiam metaduomenis
+        if (!all(is.na(m_df$INTERNAL_JOIN_ID))) {
+          df_long <- df_long %>% 
+            dplyr::left_join(m_df, by = c("Sample" = "INTERNAL_JOIN_ID"))
+        }
+      }
+      
+      df_long
     })
     
     output$plot_alpha_multi <- renderPlotly({
-      req(alpha_data(), input$alpha_metrics_sel)
-      df <- alpha_data() %>% dplyr::filter(Metric %in% input$alpha_metrics_sel & !is.na(Value))
+      # Naudojame filtruotus duomenis
+      df <- alpha_data_final() %>% 
+        dplyr::filter(Metric %in% input$alpha_metrics_sel & !is.na(Value))
+      
       if(nrow(df) == 0) return(NULL)
-      p <- suppressWarnings({
-        ggplot2::ggplot(df, ggplot2::aes(x = Metric, y = Value, fill = Metric)) +
-          ggplot2::geom_boxplot(alpha = 0.6, outlier.shape = NA) +
-          ggplot2::geom_jitter(ggplot2::aes(text = paste("Sample:", Sample, "<br>Value:", round(Value, 3))), width = 0.15, size = 2, alpha = 0.7) +
-          ggplot2::facet_wrap(~Metric, scales = "free", nrow = 1) + ggplot2::theme_minimal() +
-          ggplot2::theme(legend.position = "none", axis.title.x = ggplot2::element_blank(), axis.text.x = ggplot2::element_blank(),
-                         strip.background = ggplot2::element_rect(fill = "#f0f0f0", color = NA), strip.text = ggplot2::element_text(face = "bold")) +
-          ggplot2::scale_fill_brewer(palette = "Set2")
-      })
+      
+      p <- ggplot2::ggplot(df, ggplot2::aes(x = Group_Label, y = Value, fill = Group)) +
+        ggplot2::geom_boxplot(alpha = 0.6, outlier.shape = NA) +
+        ggplot2::geom_jitter(ggplot2::aes(text = paste("Sample:", Sample, "<br>Value:", round(Value, 3))), 
+                             width = 0.15, size = 2, alpha = 0.7) +
+        ggplot2::facet_wrap(~Metric, scales = "free", nrow = 1) + 
+        ggplot2::theme_minimal() +
+        ggplot2::labs(x = NULL, y = "Index Value") +
+        ggplot2::theme(
+          legend.position = "none",
+          strip.background = ggplot2::element_rect(fill = "#f0f0f0", color = NA),
+          strip.text = ggplot2::element_text(face = "bold", size = 12),
+          axis.text.x = ggplot2::element_text(angle = 45, hjust = 1)
+        )
+      
+      # Sutvarkome spalvas (kad būtų nuoseklios)
+      if (length(unique(df$Group)) <= 12) {
+        p <- p + ggplot2::scale_fill_brewer(palette = "Set3")
+      }
+      
       plotly::ggplotly(p, tooltip = "text")
     })
     
