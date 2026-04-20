@@ -37,6 +37,12 @@ filterUI <- function(id, title = "Data Table") {
                           choices = c("Any column matches" = "any", "All columns match" = "all"), 
                           inline = TRUE),
              actionButton(ns("btn_global_filter"), "Apply Global Filter", class="btn-success btn-sm")
+      ),
+      column(3, 
+             tags$label("Filter by Min Total Reads"),
+             numericInput(ns("min_total_reads"), NULL, value = 10, min = 0),
+             helpText("Removes rows where sum of all samples < threshold"),
+             actionButton(ns("btn_read_filter"), "Filter Reads", class="btn-success btn-sm")
       )
     ),
     br(),
@@ -91,6 +97,21 @@ filterServer <- function(id, original_data, tax_data = NULL) {
              rep(FALSE, length(s))
       )
     }
+    
+    observeEvent(input$btn_read_filter, {
+      req(input$min_total_reads)
+      f_id <- get_uid()
+      filters <- active_filters()
+      
+      filters[[f_id]] <- list(
+        type = "min_reads",
+        threshold = input$min_total_reads
+      )
+      
+      active_filters(filters)
+    })
+    
+    
     
     output$tax_join_ui <- renderUI({
       req(tax_data())
@@ -206,12 +227,23 @@ filterServer <- function(id, original_data, tax_data = NULL) {
       tagList(lapply(names(filters), function(f_id) {
         f <- filters[[f_id]]
         
-        label <- if (f$type == "column") {
-          paste0("[Col] ", f$col, ": ", paste(f$val, collapse = ", "))
-        } else if (f$mode == "text") {
-          paste0("[Global text] ", f$text_op, ": '", f$val, "' (", f$logic, ")")
-        } else {
-          paste0("[Global num] ", f$op, " ", f$val, " (", f$logic, ")")
+        # Nustatome numatytąją etiketę
+        label <- "Filter"
+        
+        # SAUGUS TIKRINIMAS: pirmiausia žiūrime į f$type
+        if (!is.null(f$type)) {
+          if (f$type == "column") {
+            label <- paste0("[Col] ", f$col, ": ", paste(f$val, collapse = ", "))
+          } else if (f$type == "min_reads") {
+            label <- paste0("[Min Total] >= ", f$threshold)
+          } else if (f$type == "global") {
+            # Tik jei tipas 'global', žiūrime į 'mode'
+            if (!is.null(f$mode) && f$mode == "text") {
+              label <- paste0("[Global text] ", f$text_op, ": '", f$val, "' (", f$logic, ")")
+            } else {
+              label <- paste0("[Global num] ", f$op, " ", f$val, " (", f$logic, ")")
+            }
+          }
         }
         
         tags$div(
@@ -230,65 +262,47 @@ filterServer <- function(id, original_data, tax_data = NULL) {
       filters <- active_filters()
       
       for (f in filters) {
-        
         if (f$type == "column") {
           if (!f$col %in% names(df)) next
-          
           col_vals <- df[[f$col]]
-          
           if (is.numeric(col_vals)) {
-            df <- df[!is.na(col_vals) & 
-                       col_vals >= f$val[1] & 
-                       col_vals <= f$val[2], ]
+            df <- df[!is.na(col_vals) & col_vals >= f$val[1] & col_vals <= f$val[2], ]
           } else {
             df <- df[as.character(col_vals) %in% f$val, ]
           }
           
         } else if (f$type == "global") {
-          
           target_cols <- setdiff(names(df), f$ignore)
-          
           if (f$mode == "numeric") {
             numeric_cols <- target_cols[sapply(df[target_cols], is.numeric)]
-            
             if (length(numeric_cols) > 0) {
               temp <- df[, numeric_cols, drop = FALSE]
               fun  <- match.fun(f$op)
-              
               logic_mat <- fun(temp, f$val)
               logic_mat[is.na(logic_mat)] <- FALSE
-              
-              keep <- if (f$logic == "any") {
-                rowSums(logic_mat) > 0
-              } else {
-                rowSums(logic_mat) == ncol(logic_mat)
-              }
-              
+              keep <- if (f$logic == "any") rowSums(logic_mat) > 0 else rowSums(logic_mat) == ncol(logic_mat)
               df <- df[keep, ]
             }
-            
           } else {
-            logic_mat <- sapply(target_cols, function(col) {
-              apply_text_match(df[[col]], f$text_op, f$val, f$case_sens)
-            })
-            
-            if (is.vector(logic_mat)) {
-              logic_mat <- matrix(logic_mat, ncol = 1)
-            }
-            
+            logic_mat <- sapply(target_cols, function(col) apply_text_match(df[[col]], f$text_op, f$val, f$case_sens))
+            if (is.vector(logic_mat)) logic_mat <- matrix(logic_mat, ncol = 1)
             logic_mat[is.na(logic_mat)] <- FALSE
-            
-            keep <- if (f$logic == "any") {
-              rowSums(logic_mat) > 0
-            } else {
-              rowSums(logic_mat) == ncol(logic_mat)
-            }
-            
+            keep <- if (f$logic == "any") rowSums(logic_mat) > 0 else rowSums(logic_mat) == ncol(logic_mat)
             df <- df[keep, ]
+          }
+          
+        } else if (f$type == "min_reads") {
+          # Filtravimas pagal bendrą reads skaičių
+          numeric_cols <- names(df)[sapply(df, is.numeric)]
+          # Saugiklis: neištrinkite tax_id, net jei jis būtų skaitinis
+          numeric_cols <- setdiff(numeric_cols, c("tax_id", "Species_Full"))
+          
+          if (length(numeric_cols) > 0) {
+            row_totals <- rowSums(df[, numeric_cols, drop = FALSE], na.rm = TRUE)
+            df <- df[row_totals >= f$threshold, ]
           }
         }
       }
-      
       df
     })
     
