@@ -51,7 +51,9 @@ ampliconUI <- function(id) {
     tabsetPanel(
       tabPanel("Taxonomic Bar Chart", 
                uiOutput(ns("color_editor_ui")),
-               plotlyOutput(ns("plot_bar"), height = "800px")),
+               div(style = "overflow-x: auto; width: 100%;", 
+                   plotlyOutput(ns("plot_bar"), width = "2000px", height = "800px")
+               )),
       
       tabPanel("Heatmap", 
                plotlyOutput(ns("plot_heatmap"), height = "800px")),
