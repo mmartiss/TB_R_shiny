@@ -50,7 +50,7 @@ metadataFilterUI <- function(id) {
       hr(),
       fluidRow(
         # --- Batch Replace ---
-        column(4, style = "background-color: #fdf5e6; border-radius: 5px; padding: 10px;",
+        column(4,
                tags$b("Batch Replace"),
                uiOutput(ns("replace_col_ui")),
                uiOutput(ns("replace_val_old_ui")),
@@ -59,7 +59,7 @@ metadataFilterUI <- function(id) {
         ),
         
         # --- Global Value Filter (numeric + text) ---
-        column(4, style = "background-color: #f9f9f9; border-radius: 5px; padding: 10px;",
+        column(4,
                tags$b("Global Value Filter (Across Columns)"),
                uiOutput(ns("global_ignore_ui")),
                radioButtons(ns("global_mode"), "Filter type:",
@@ -92,7 +92,7 @@ metadataFilterUI <- function(id) {
         ),
         
         # --- Prideti stulpeli ---
-        column(4, style = "background-color: #f0fff0; border-radius: 5px; padding: 10px;",
+        column(4,
                tags$b("Add New Column"),
                textInput(ns("new_col_name_add"), "Column name", placeholder = "e.g. group"),
                selectInput(ns("new_col_type"), "Fill with",

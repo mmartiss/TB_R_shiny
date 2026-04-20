@@ -9,7 +9,7 @@ filterUI <- function(id, title = "Data Table") {
       column(3, tags$label("Batch Replace"), uiOutput(ns("replace_col_ui")), uiOutput(ns("replace_val_old_ui")), textInput(ns("replace_val_new"), NULL, placeholder="New value"), actionButton(ns("btn_replace"), "Replace All", class="btn-warning btn-sm")),
       column(3, tags$label("Filter by specific column"), uiOutput(ns("col_filter_ui")), uiOutput(ns("filter_value_ui")), actionButton(ns("btn_filter"), "Filter Column", class="btn-primary btn-sm")),
       
-      column(4, style = "background-color: #f9f9f9; border-radius: 5px; padding: 10px;",
+      column(4,
              tags$label("Global Value Filter (Across Columns)"),
              uiOutput(ns("global_ignore_ui")),
              radioButtons(ns("global_mode"), "Filter type:",
@@ -43,6 +43,13 @@ filterUI <- function(id, title = "Data Table") {
              numericInput(ns("min_total_reads"), NULL, value = 10, min = 0),
              helpText("Removes rows where sum of all samples < threshold"),
              actionButton(ns("btn_read_filter"), "Filter Reads", class="btn-success btn-sm")
+      ),
+      column(3, 
+             tags$label("Group by Taxonomy"),
+             selectInput(ns("group_level"), NULL, 
+                         choices = c("phylum", "class", "order", "family", "genus", "species")),
+             actionButton(ns("btn_group_taxa"), "Group & Sum Counts", class="btn-info btn-sm"),
+             helpText("This will sum all reads for each taxonomic group.")
       )
     ),
     br(),
@@ -97,6 +104,26 @@ filterServer <- function(id, original_data, tax_data = NULL) {
              rep(FALSE, length(s))
       )
     }
+    
+    observeEvent(input$btn_group_taxa, {
+      req(input$group_level)
+      filters <- active_filters()
+      
+      # Pašaliname senus grupavimo filtrus prieš pridedant naują
+      new_filters <- list()
+      for(id in names(filters)) {
+        if (filters[[id]]$type != "group") new_filters[[id]] <- filters[[id]]
+      }
+      
+      # Pridedame naują grupavimą
+      f_id <- get_uid()
+      new_filters[[f_id]] <- list(
+        type = "group",
+        level = input$group_level
+      )
+      
+      active_filters(new_filters)
+    })
     
     observeEvent(input$btn_read_filter, {
       req(input$min_total_reads)
@@ -226,29 +253,21 @@ filterServer <- function(id, original_data, tax_data = NULL) {
       
       tagList(lapply(names(filters), function(f_id) {
         f <- filters[[f_id]]
-        
-        # Nustatome numatytąją etiketę
         label <- "Filter"
         
-        # SAUGUS TIKRINIMAS: pirmiausia žiūrime į f$type
-        if (!is.null(f$type)) {
-          if (f$type == "column") {
-            label <- paste0("[Col] ", f$col, ": ", paste(f$val, collapse = ", "))
-          } else if (f$type == "min_reads") {
-            label <- paste0("[Min Total] >= ", f$threshold)
-          } else if (f$type == "global") {
-            # Tik jei tipas 'global', žiūrime į 'mode'
-            if (!is.null(f$mode) && f$mode == "text") {
-              label <- paste0("[Global text] ", f$text_op, ": '", f$val, "' (", f$logic, ")")
-            } else {
-              label <- paste0("[Global num] ", f$op, " ", f$val, " (", f$logic, ")")
-            }
-          }
+        if (identical(f$type, "column")) {
+          label <- paste0("[Col] ", f$col)
+        } else if (identical(f$type, "min_reads")) {
+          label <- paste0("[Min Total] >= ", f$threshold)
+        } else if (identical(f$type, "group")) {
+          label <- paste0("[Grouped by] ", f$level)
+        } else if (identical(f$type, "global")) {
+          label <- if(identical(f$mode, "text")) "[Global Text]" else "[Global Num]"
         }
         
         tags$div(
           style = "display:inline-block; margin:2px;",
-          tags$span(class="filter-badge", shorten(label, 40)),
+          tags$span(class="filter-badge", shorten(label, 30)),
           actionLink(ns(paste0("remove_", f_id)),
                      icon("times-circle"),
                      style="color:#d9534f; margin-left:4px;")
@@ -261,50 +280,192 @@ filterServer <- function(id, original_data, tax_data = NULL) {
       req(df)
       filters <- active_filters()
       
+      # 1. PRITAIKOME STANDARTINIUS FILTRUS (išskyrus grupavimą)
       for (f in filters) {
+        if (is.null(f$type) || f$type == "group") next
+        
+        # Stulpelio filtras
         if (f$type == "column") {
           if (!f$col %in% names(df)) next
-          col_vals <- df[[f$col]]
-          if (is.numeric(col_vals)) {
-            df <- df[!is.na(col_vals) & col_vals >= f$val[1] & col_vals <= f$val[2], ]
+          vals <- df[[f$col]]
+          if (is.numeric(vals)) {
+            df <- df[!is.na(vals) & vals >= f$val[1] & vals <= f$val[2], ]
           } else {
-            df <- df[as.character(col_vals) %in% f$val, ]
+            df <- df[as.character(vals) %in% f$val, ]
           }
-          
-        } else if (f$type == "global") {
+        } 
+        # Globalus filtras
+        else if (f$type == "global") {
           target_cols <- setdiff(names(df), f$ignore)
+          if (length(target_cols) == 0) next
+          
           if (f$mode == "numeric") {
-            numeric_cols <- target_cols[sapply(df[target_cols], is.numeric)]
-            if (length(numeric_cols) > 0) {
-              temp <- df[, numeric_cols, drop = FALSE]
-              fun  <- match.fun(f$op)
-              logic_mat <- fun(temp, f$val)
+            num_cols <- target_cols[vapply(df[target_cols], is.numeric, logical(1))]
+            if (length(num_cols) > 0) {
+              mat <- as.matrix(df[, num_cols, drop = FALSE])
+              logic_mat <- match.fun(f$op)(mat, f$val)
               logic_mat[is.na(logic_mat)] <- FALSE
               keep <- if (f$logic == "any") rowSums(logic_mat) > 0 else rowSums(logic_mat) == ncol(logic_mat)
               df <- df[keep, ]
             }
           } else {
-            logic_mat <- sapply(target_cols, function(col) apply_text_match(df[[col]], f$text_op, f$val, f$case_sens))
-            if (is.vector(logic_mat)) logic_mat <- matrix(logic_mat, ncol = 1)
+            # Tekstinis globalus filtras
+            logic_list <- lapply(target_cols, function(c) apply_text_match(df[[c]], f$text_op, f$val, f$case_sens))
+            logic_mat <- do.call(cbind, logic_list)
             logic_mat[is.na(logic_mat)] <- FALSE
             keep <- if (f$logic == "any") rowSums(logic_mat) > 0 else rowSums(logic_mat) == ncol(logic_mat)
             df <- df[keep, ]
           }
-          
-        } else if (f$type == "min_reads") {
-          # Filtravimas pagal bendrą reads skaičių
-          numeric_cols <- names(df)[sapply(df, is.numeric)]
-          # Saugiklis: neištrinkite tax_id, net jei jis būtų skaitinis
-          numeric_cols <- setdiff(numeric_cols, c("tax_id", "Species_Full"))
-          
-          if (length(numeric_cols) > 0) {
-            row_totals <- rowSums(df[, numeric_cols, drop = FALSE], na.rm = TRUE)
-            df <- df[row_totals >= f$threshold, ]
+        }
+        # Reads filtras
+        else if (f$type == "min_reads") {
+          num_cols <- names(df)[vapply(df, is.numeric, logical(1))]
+          num_cols <- setdiff(num_cols, c("tax_id", "Species_Full"))
+          if (length(num_cols) > 0) {
+            df <- df[rowSums(df[, num_cols, drop = FALSE], na.rm = TRUE) >= f$threshold, ]
           }
         }
       }
-      df
+      
+      # 2. PRITAIKOME GRUPAVIMĄ (PASKUTINIS ŽINGSNIS)
+      # Ieškome ar yra bent vienas grupavimo filtras
+      group_filter <- NULL
+      for (f in filters) {
+        if (identical(f$type, "group")) {
+          group_filter <- f
+          break
+        }
+      }
+      
+      if (!is.null(group_filter)) {
+        req(tax_data())
+        level <- group_filter$level
+        tax <- tax_data()
+        
+        # Saugus sujungimas
+        if ("tax_id" %in% names(df) && "tax_id" %in% names(tax)) {
+          df$tax_id <- as.character(df$tax_id)
+          tax$tax_id <- as.character(tax$tax_id)
+          
+          # Prijungiam tik reikiamą taksonomijos stulpelį
+          tax_sub <- tax[, c("tax_id", level), drop = FALSE]
+          df <- dplyr::left_join(df, tax_sub, by = "tax_id")
+          
+          # Sutvarkom Unknown
+          df[[level]][is.na(df[[level]]) | df[[level]] == ""] <- "Unknown"
+          
+          # Surandam mėginius sumavimui
+          num_cols <- names(df)[vapply(df, is.numeric, logical(1))]
+          sample_cols <- setdiff(num_cols, "tax_id")
+          
+          # Agreguojame
+          df <- df %>%
+            dplyr::group_by(!!dplyr::sym(level)) %>%
+            dplyr::summarise(dplyr::across(dplyr::all_of(sample_cols), sum, na.rm = TRUE), .groups = "drop")
+          
+          # Rūšiuojame pagal sumą (aukščiausi viršuje)
+          if (length(sample_cols) > 0) {
+            total_reads <- rowSums(df[, sample_cols, drop = FALSE])
+            df <- df[order(total_reads, decreasing = TRUE), ]
+          }
+        }
+      }
+      
+      return(df)
     })
+    
+    # 1. Stulpelių šalinimo pasirinkimas
+    output$col_remove_ui <- renderUI({
+      req(current_data())
+      selectInput(ns("cols_to_remove"), NULL, choices = names(current_data()), multiple = TRUE)
+    })
+    
+    # 2. Rūšiavimo pasirinkimas (pagal tai, kas matoma lentelėje)
+    output$col_sort_ui <- renderUI({
+      req(filtered_result())
+      selectInput(ns("col_sort"), NULL, choices = names(filtered_result()))
+    })
+    
+    # 3. Pervadinimo pasirinkimas
+    output$col_rename_select_ui <- renderUI({
+      req(current_data())
+      selectInput(ns("col_to_rename"), NULL, choices = names(current_data()))
+    })
+    
+    # 4. Batch Replace pasirinkimai
+    output$replace_col_ui <- renderUI({
+      req(current_data())
+      selectInput(ns("replace_col"), NULL, choices = names(current_data()))
+    })
+    
+    output$replace_val_old_ui <- renderUI({
+      req(input$replace_col, current_data())
+      vals <- sort(unique(as.character(current_data()[[input$replace_col]])))
+      selectInput(ns("replace_val_old"), NULL, choices = vals)
+    })
+    
+    # 5. Filtravimo pagal stulpelį pasirinkimas
+    output$col_filter_ui <- renderUI({
+      req(filtered_result())
+      selectInput(ns("col_filter"), NULL, choices = names(filtered_result()))
+    })
+    
+    # 6. Dinaminis filtravimo reikšmių pasirinkimas (Slider arba Select)
+    output$filter_value_ui <- renderUI({
+      req(input$col_filter, filtered_result())
+      df <- filtered_result()
+      col_data <- df[[input$col_filter]]
+      
+      if (is.numeric(col_data)) {
+        rng <- range(col_data, na.rm = TRUE)
+        sliderInput(ns("filter_val"), "Range:", min = rng[1], max = rng[2], value = rng)
+      } else {
+        vals <- sort(unique(as.character(col_data)))
+        selectizeInput(ns("filter_val"), "Values:", choices = vals, multiple = TRUE,
+                       options = list(plugins = list('remove_button')))
+      }
+    })
+    
+    # 7. Globalaus filtro ignoravimo sąrašas
+    output$global_ignore_ui <- renderUI({
+      req(current_data())
+      selectizeInput(ns("global_ignore_cols"), NULL, 
+                     choices = names(current_data()), multiple = TRUE,
+                     options = list(plugins = list('remove_button')))
+    })
+    
+    # --- PAPILDOMAI: Kad mygtukai 'Remove', 'Rename', 'Sort' veiktų ---
+    
+    observeEvent(input$btn_remove, {
+      req(input$cols_to_remove)
+      df <- current_data()
+      df <- df[, !(names(df) %in% input$cols_to_remove), drop = FALSE]
+      current_data(df)
+    })
+    
+    observeEvent(input$btn_rename, {
+      req(input$col_to_rename, input$new_col_name)
+      df <- current_data()
+      names(df)[names(df) == input$col_to_rename] <- input$new_col_name
+      current_data(df)
+    })
+    
+    observeEvent(input$btn_replace, {
+      req(input$replace_col, input$replace_val_old)
+      df <- current_data()
+      col <- input$replace_col
+      df[[col]][df[[col]] == input$replace_val_old] <- input$replace_val_new
+      current_data(df)
+    })
+    
+    observeEvent(input$btn_sort, {
+      req(input$col_sort)
+      df <- current_data()
+      ord <- if(input$sort_dir == "asc") order(df[[input$col_sort]]) else order(df[[input$col_sort]], decreasing = TRUE)
+      current_data(df[ord, , drop = FALSE])
+    })
+    
+    
     
     observeEvent(input$btn_reset, {
       req(original_data())

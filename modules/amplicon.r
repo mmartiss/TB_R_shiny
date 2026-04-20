@@ -942,14 +942,14 @@ ampliconServer <- function(id, data_res) {
       present_taxa <- as.character(unique(df$taxon))
       cols <- all_cols[names(all_cols) %in% present_taxa]
       
-      y_label <- if(input$meta_show_points) "Santykinis dažnis" else "Vidutinis santykinis dažnis"
+      y_label <- if(input$meta_show_points) "Relative frequency" else "Average relative frequency"
       
       p <- ggplot2::ggplot(df, ggplot2::aes(
         x = display_x, 
         y = plot_value, 
         fill = taxon,
         # tooltip tekstas
-        text = paste0("Mėginys/Grupė: ", display_x, "<br>Rūšis: ", taxon, "<br>Dalis: ", round(plot_value*100, 2), "%")
+        text = paste0("Sample/Group: ", display_x, "<br>Type: ", taxon, "<br>Part: ", round(plot_value*100, 2), "%")
       )) +
         ggplot2::geom_bar(stat = "identity", position = "stack", width = 0.8) +
         # Naudojame išfiltruotas spalvas
