@@ -64,10 +64,10 @@ filterServer <- function(id, original_data, tax_data = NULL) {
     current_data   <- reactiveVal(NULL)
     active_filters <- reactiveVal(list())
     
-    observe({
+    observeEvent(original_data(), {
       req(original_data())
       current_data(original_data())
-    })
+    }, once = TRUE)
     
     shorten <- function(x, n = 25) {
       ifelse(nchar(x) > n, paste0(substr(x, 1, n - 3), "..."), x)
@@ -91,6 +91,58 @@ filterServer <- function(id, original_data, tax_data = NULL) {
              rep(FALSE, length(s))
       )
     }
+    
+    output$tax_join_ui <- renderUI({
+      req(tax_data())
+      actionButton(ns("btn_do_tax_join"), "Add Species Column", class = "btn-info btn-sm")
+    })
+    
+    # Sujungimo veiksmas
+    observeEvent(input$btn_do_tax_join, {
+      df <- current_data()
+      tax <- tax_data()
+      req(df, tax)
+      
+      # 1. Patikriname ar yra tax_id
+      if (!"tax_id" %in% names(df)) {
+        showNotification("The 'tax_id' column was not found in the table", type = "error")
+        return()
+      }
+      
+      # 2. Paruošiame IDs
+      df$tax_id <- as.character(df$tax_id)
+      tax$tax_id <- as.character(tax$tax_id)
+      
+      # 3. Sujungiam duomenis
+      res <- dplyr::left_join(df, tax, by = "tax_id")
+      
+      # 4. Sukuriam Species stulpelį ir išvalom nereikalingus taksonomijos stulpelius
+      # Tikriname, ar taksonomijos faile yra reikiami stulpeliai (mažosiomis raidėmis)
+      if ("genus" %in% names(res) && "species" %in% names(res)) {
+        
+        # Sukuriam apjungtą pavadinimą
+        res$Species_Full <- paste(res$genus, res$species)
+        res$Species_Full <- gsub("NA NA|NA|Unknown Unknown", "Unknown", res$Species_Full)
+        
+        # Surandame visus stulpelius, kurie atkeliavo iš 'tax' failo (išskyrus tax_id ir mūsų naują Species_Full)
+        tax_cols_to_remove <- setdiff(names(tax), "tax_id")
+        
+        # Pašaliname tuos papildomus stulpelius (Phylum, Order ir t.t.), kad liktų tik Species_Full
+        res <- res[, !names(res) %in% tax_cols_to_remove]
+        
+        # 5. PERKELIAME stulpelį šalia tax_id
+        # Naudojame relocate funkciją (iš dplyr)
+        res <- res %>% dplyr::relocate(Species_Full, .after = tax_id)
+        
+        # Atnaujiname duomenis
+        current_data(res)
+        showNotification("The Species column has been successfully added next to tax_id", type = "message")
+        
+      } else {
+        showNotification("The taxonomy file does not contain 'genus' or 'species' columns", type = "error")
+      }
+    })
+    
     
     observeEvent(input$btn_filter, {
       req(input$col_filter, input$filter_val)
