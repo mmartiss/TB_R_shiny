@@ -34,6 +34,14 @@ ampliconUI <- function(id) {
                                      "Weighted UniFrac PCoA" = "wunifrac"),
                          selected = "alpha")
       ),
+      column(2,
+             tags$label("Sample Type Filter"),
+             selectInput(ns("sample_suffix_filter"), NULL,
+                         choices = c("All Samples" = "all", 
+                                     "Only -S (S)" = "-S", 
+                                     "Only -T (T)" = "-T"),
+                         selected = "all")
+      ),
       column(3,
              tags$br(),
              actionButton(ns("btn_generate"), "Update All Analysis", class = "btn-success w-100")
@@ -145,14 +153,34 @@ ampliconServer <- function(id, data_res) {
       long_counts <- merged %>%
         dplyr::select(dplyr::all_of(c(level, sample_cols))) %>%
         tidyr::pivot_longer(cols = dplyr::all_of(sample_cols), names_to = "sample", values_to = "counts") %>%
-        dplyr::mutate(sample = gsub("\\.fastq.*$|\\.fq.*$", "", sample)) %>%
+        # 1. Nuvalom pavadinimus
+        dplyr::mutate(sample = gsub("\\.fastq.*$|\\.fq.*$", "", sample))
+      
+      # --- NAUJA: Filtravimas pagal S/T galūnes ---
+      if (input$sample_suffix_filter != "all") {
+        suffix <- input$sample_suffix_filter
+        # Naudojame grepl, kad rastume mėginius, kurie baigiasi pasirinktu sufiksu
+        long_counts <- long_counts %>% 
+          dplyr::filter(grepl(paste0(suffix, "$"), sample))
+      }
+      # --------------------------------------------
+      
+      long_counts <- long_counts %>%
         dplyr::group_by(sample, taxon = .data[[level]]) %>%
         dplyr::summarise(counts = sum(counts, na.rm = TRUE), .groups = "drop")
       
-      valid_samples <- long_counts %>% dplyr::group_by(sample) %>% dplyr::summarise(t = sum(counts)) %>% dplyr::filter(t > 0) %>% dplyr::pull(sample)
+      valid_samples <- long_counts %>% 
+        dplyr::group_by(sample) %>% 
+        dplyr::summarise(t = sum(counts)) %>% 
+        dplyr::filter(t > 0) %>% 
+        dplyr::pull(sample)
+      
       long_counts <- long_counts %>% dplyr::filter(sample %in% valid_samples)
       
-      matrix_counts <- long_counts %>% tidyr::pivot_wider(names_from = taxon, values_from = counts, values_fill = 0) %>% tibble::column_to_rownames("sample")
+      matrix_counts <- long_counts %>% 
+        tidyr::pivot_wider(names_from = taxon, values_from = counts, values_fill = 0) %>% 
+        tibble::column_to_rownames("sample")
+      
       list(long = long_counts, matrix = matrix_counts)
     })
     
