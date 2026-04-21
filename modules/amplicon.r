@@ -1,8 +1,7 @@
-# Reikalingos bibliotekos: shiny, dplyr, tidyr, plotly, vegan, phyloseq, ape, phytools
-
 ampliconUI <- function(id) {
   ns <- NS(id)
   tagList(
+    # Global controls shared by all analysis tabs
     h2("Amplicon Analysis"),
     fluidRow(
       column(2,
@@ -48,16 +47,20 @@ ampliconUI <- function(id) {
       )
     ),
     hr(),
+    # Analysis tabs: Bar Chart -> Heatmap -> Alpha -> Beta -> Metadata
     tabsetPanel(
+      # Taxonomic composition (stacked relative abundance)
       tabPanel("Taxonomic Bar Chart", 
                uiOutput(ns("color_editor_ui")),
                div(style = "overflow-x: auto; width: 100%;", 
                    plotlyOutput(ns("plot_bar"), width = "2000px", height = "800px")
                )),
       
+      # Taxon-by-sample abundance heatmap
       tabPanel("Heatmap", 
                plotlyOutput(ns("plot_heatmap"), height = "800px")),
       
+      # Within-sample diversity metrics
       tabPanel("Alpha Diversity", 
                br(),
                wellPanel(
@@ -78,6 +81,7 @@ ampliconUI <- function(id) {
                ),
                plotlyOutput(ns("plot_alpha_multi"), height = "500px")),
       
+              # Between-sample distance ordination (PCoA)
       tabPanel("Beta Diversity",
                br(),
                fluidRow(
@@ -91,7 +95,6 @@ ampliconUI <- function(id) {
                                     choices = c("Uniform" = "none", "Metadata Category" = "meta", "Taxon Abundance" = "tax", "Dominant Taxon (Discrete Colors)" = "dominant")),
                         uiOutput(ns("beta_color_var_ui")),
                         hr(),
-                        # NAUJA: Biplot nustatymai
                         checkboxInput(ns("beta_show_biplot"), "Show Taxa Influences (Biplot)", value = FALSE),
                         conditionalPanel(
                           condition = sprintf("input['%s'] == true", ns("beta_show_biplot")),
@@ -104,10 +107,10 @@ ampliconUI <- function(id) {
                  )
                )
       ),
+              # Taxon composition stratified by metadata categories
       tabPanel("Metadata Analysis",
                br(),
                fluidRow(
-                 # Suraskite "Metadata Analysis" skiltį savo ampliconUI funkcijoje
                  column(3,
                         wellPanel(
                           h4("Plot Settings"),
@@ -116,7 +119,6 @@ ampliconUI <- function(id) {
                           selectInput(ns("meta_facet_col"), "Facet Column (Optional):", choices = c("None" = ".")),
                           checkboxInput(ns("meta_show_points"), "Show individual samples", value = FALSE),
                           hr(),
-                          # Štai čia atsiras dinaminiai filtrai
                           uiOutput(ns("meta_val_filters_ui")),
                           hr(),
                           helpText("Choose which categories to include in the plot.")
@@ -133,7 +135,21 @@ ampliconUI <- function(id) {
 ampliconServer <- function(id, data_res) {
   moduleServer(id, function(input, output, session) {
     ns <- session$ns
+
+    # =====================================================================
+    # CODE NAVIGATION MAP
+    # 1) Shared preprocessing + ordering
+    # 2) Alpha Diversity
+    # 3) Beta Diversity
+    # 4) Taxonomic Bar Chart + Heatmap
+    # 5) Metadata Analysis
+    # =====================================================================
     
+    # -----------------------------
+    # 1) Shared preprocessing core
+    # -----------------------------
+
+    # Reusable color palettes for taxa
     PALETTES <- list(
       "Tableau 10"   = c("#4E79A7","#F28E2B","#E15759","#76B7B2","#59A14F","#EDC948","#B07AA1","#FF9DA7","#9C755F","#BAB0AC"),
       "Pastel"       = c("#AEC6CF","#FFD1DC","#B5EAD7","#FFDAC1","#C7CEEA","#E2F0CB","#F2D7D9","#D5E8D4","#DAE8FC","#F8CECC"),
@@ -142,13 +158,15 @@ ampliconServer <- function(id, data_res) {
       "Earth"        = c("#8C510A","#BF812D","#DFC27D","#80CDC1","#35978F","#01665E","#543005","#F6E8C3","#C7EAE5","#003C30")
     )
     
+    # Runtime map of taxon -> color (used by multiple plots)
     rv_colors <- reactiveValues(map = list())
     
+    # Safe metadata reader (returns NULL when metadata is unavailable)
     safe_meta <- reactive({
       tryCatch(data_res$meta(), error = function(e) NULL)
     })
     
-    # --- DUOMENŲ APDOROJIMAS ---
+    # Master preprocessing: abundance + taxonomy -> long + matrix formats
     processed_counts <- eventReactive(input$btn_generate, {
       req(data_res$abundance, data_res$taxonomy)
       ab <- data_res$abundance(); tax <- data_res$taxonomy(); level <- input$tax_level
@@ -163,17 +181,13 @@ ampliconServer <- function(id, data_res) {
       long_counts <- merged %>%
         dplyr::select(dplyr::all_of(c(level, sample_cols))) %>%
         tidyr::pivot_longer(cols = dplyr::all_of(sample_cols), names_to = "sample", values_to = "counts") %>%
-        # 1. Nuvalom pavadinimus
         dplyr::mutate(sample = gsub("\\.fastq.*$|\\.fq.*$", "", sample))
       
-      # --- NAUJA: Filtravimas pagal S/T galūnes ---
       if (input$sample_suffix_filter != "all") {
         suffix <- input$sample_suffix_filter
-        # Naudojame grepl, kad rastume mėginius, kurie baigiasi pasirinktu sufiksu
         long_counts <- long_counts %>% 
           dplyr::filter(grepl(paste0(suffix, "$"), sample))
       }
-      # --------------------------------------------
       
       long_counts <- long_counts %>%
         dplyr::group_by(sample, taxon = .data[[level]]) %>%
@@ -194,7 +208,7 @@ ampliconServer <- function(id, data_res) {
       list(long = long_counts, matrix = matrix_counts)
     })
     
-    # --- RIKIAVIMO LOGIKA ---
+    # Shared sample ordering logic used by Bar Chart and Heatmap
     sample_order <- reactive({
       req(processed_counts(), input$sort_by)
       mat <- processed_counts()$matrix
@@ -265,6 +279,7 @@ ampliconServer <- function(id, data_res) {
       return(all_samples)
     })
     
+    # Prepare Top-N taxa and relative abundance for stacked bar plotting
     prepared_bar_data <- reactive({
       req(processed_counts(), sample_order())
       ld <- processed_counts()$long
@@ -280,6 +295,12 @@ ampliconServer <- function(id, data_res) {
         dplyr::mutate(sample = factor(sample, levels = sample_order()))
     })
     
+    # Build/update active color map for currently visible taxa
+    # -----------------------------
+    # 3) Beta Diversity
+    # -----------------------------
+
+    # Keep beta color mode choices aligned to available metadata
     observe({
       req(prepared_bar_data()); taxa <- unique(prepared_bar_data()$taxon); pal <- PALETTES[[input$color_palette]]
       cols <- rep_len(pal, length(taxa)); names(cols) <- taxa
@@ -288,6 +309,7 @@ ampliconServer <- function(id, data_res) {
       rv_colors$map <- as.list(cols)
     })
     
+    # Per-taxon color editor UI
     output$color_editor_ui <- renderUI({
       req(rv_colors$map); taxa <- names(rv_colors$map)
       tags$div(style = "display:flex; flex-wrap:wrap; gap:10px; padding: 10px; background: #f9f9f9; border-bottom: 1px solid #ddd;",
@@ -299,8 +321,11 @@ ampliconServer <- function(id, data_res) {
                }))
     })
     
-    # --- ALPHA DIVERSITY ---
-    
+    # -----------------------------
+    # 2) Alpha Diversity
+    # -----------------------------
+
+    # UI: choose metadata column for grouping alpha metrics
     output$alpha_group_by_ui <- renderUI({
       m <- safe_meta()
       choices <- c("No Grouping" = "none")
@@ -310,37 +335,34 @@ ampliconServer <- function(id, data_res) {
       selectInput(ns("alpha_group_by"), "Group By (Metadata):", choices = choices)
     })
     
-    # Generuojame filtrą konkrečioms reikšmėms parinkti
+    # UI: choose subgroup values within selected metadata column
     output$alpha_group_filter_ui <- renderUI({
       req(input$alpha_group_by, input$alpha_group_by != "none")
       m <- safe_meta()
       req(m)
       
-      # Paimame unikalias reikšmes iš pasirinkto stulpelio
       col_name <- input$alpha_group_by
       vals <- sort(unique(as.character(m[[col_name]])))
       
       selectizeInput(ns("alpha_group_subset"), 
                      label = paste("Select values from", col_name, ":"),
                      choices = vals, 
-                     selected = vals, # Pagal nutylėjimą pažymėtos visos
+                     selected = vals,
                      multiple = TRUE,
                      options = list(plugins = list('remove_button')))
     })
     
+    # Final alpha table after grouping/filtering selection
     alpha_data_final <- reactive({
-      df <- alpha_data() # Čia tas pats df su InvSimpson gale ir metaduomenim
+      df <- alpha_data()
       req(df)
       
-      # 1. Nustatom bazinę grupę
       if (is.null(input$alpha_group_by) || input$alpha_group_by == "none") {
         df$Group <- "All Samples"
       } else {
-        # Patikrinam ar stulpelis egzistuoja
         if (input$alpha_group_by %in% names(df)) {
           df$Group <- as.character(df[[input$alpha_group_by]])
           
-          # 2. PRITAIKOM FILTRĄ (jei vartotojas pasirinko specifines reikšmes)
           if (!is.null(input$alpha_group_subset)) {
             df <- df %>% dplyr::filter(Group %in% input$alpha_group_subset)
           }
@@ -349,7 +371,6 @@ ampliconServer <- function(id, data_res) {
         }
       }
       
-      # 3. Perskaičiuojam n=X po filtravimo
       df <- df %>%
         group_by(Metric, Group) %>%
         mutate(n_count = n()) %>%
@@ -359,28 +380,35 @@ ampliconServer <- function(id, data_res) {
       df
     })
     
+    # Generic distance helper reused in dendrogram sorting and heatmap/bar dendrogram mode
+    calc_dist_matrix <- function(mat, metric, tree) {
+      if (metric %in% c("bray", "jaccard")) {
+        return(vegan::vegdist(mat, method = metric, binary = (metric == "jaccard")))
+      } else {
+        req(tree)
+        otu <- phyloseq::otu_table(t(as.matrix(mat)), taxa_are_rows = TRUE)
+        ps <- phyloseq::phyloseq(otu, tree)
+        return(phyloseq::distance(ps, method = metric))
+      }
+    }
+    
+    # Raw alpha metrics computation table (Sample, Metric, Value)
     alpha_data <- reactive({
       req(processed_counts())
       
-      # 1. Pasiimam matrica ir užtikrinam, kad tai yra grynai skaitinė matrica
       raw_mat <- processed_counts()$matrix
       
-      # Pašalinam bet kokius ne skaitinius stulpelius, jei jie netyčia ten pateko
-      # ir paverčiam į paprastą data.frame (ne tibble)
       mat_numeric <- as.data.frame(raw_mat)
       mat_numeric <- mat_numeric[, sapply(mat_numeric, is.numeric), drop = FALSE]
       
-      # Vegan reikalauja skaičių. Užtikrinam, kad viskas yra skaičiai:
       mat_numeric <- as.matrix(mat_numeric)
       
-      # 2. Skaičiuojam indeksus
-      # diversity() gražina vektorių, kurio pavadinimai (names) yra mėginių ID
+      # Metric formulas used in Alpha Diversity panel
+      observed <- rowSums(mat_numeric > 0)
       shannon <- vegan::diversity(mat_numeric, index = "shannon")
       simpson <- vegan::diversity(mat_numeric, index = "simpson")
       invsimpson <- vegan::diversity(mat_numeric, index = "invsimpson")
-      observed <- rowSums(mat_numeric > 0)
       
-      # 3. Sukuriam tvarkingą lentelę
       df <- data.frame(
         Sample = rownames(mat_numeric),
         Observed = as.numeric(observed),
@@ -390,21 +418,16 @@ ampliconServer <- function(id, data_res) {
         stringsAsFactors = FALSE
       )
       
-      # 4. Paverčiam į Long formatą analizei
       df_long <- df %>%
         tidyr::pivot_longer(cols = -Sample, names_to = "Metric", values_to = "Value")
       
-      # --- Rikiavimas (Užduotis: InvSimpson į galą) ---
       metric_levels <- c("Observed", "Shannon", "Simpson", "InvSimpson")
       df_long$Metric <- factor(df_long$Metric, levels = metric_levels)
       
-      # 5. Metaduomenų prijungimas (Grupavimas)
       m <- safe_meta()
-      # Tikrinam, ar metaduomenys egzistuoja ir ar pasirinktas grupavimas
       if (!is.null(m) && !is.null(input$alpha_group_by) && input$alpha_group_by != "none") {
         m_df <- as.data.frame(m)
         
-        # Surandam, kuris stulpelis metaduomenyse sutampa su mėginių pavadinimais
         m_df$INTERNAL_JOIN_ID <- NA
         if (any(df_long$Sample %in% rownames(m_df))) {
           m_df$INTERNAL_JOIN_ID <- rownames(m_df)
@@ -417,7 +440,6 @@ ampliconServer <- function(id, data_res) {
           }
         }
         
-        # Jei radom jungtį, prijungiam metaduomenis
         if (!all(is.na(m_df$INTERNAL_JOIN_ID))) {
           df_long <- df_long %>% 
             dplyr::left_join(m_df, by = c("Sample" = "INTERNAL_JOIN_ID"))
@@ -427,8 +449,8 @@ ampliconServer <- function(id, data_res) {
       df_long
     })
     
+    # Output: Alpha Diversity multi-panel boxplot
     output$plot_alpha_multi <- renderPlotly({
-      # Naudojame filtruotus duomenis
       df <- alpha_data_final() %>% 
         dplyr::filter(Metric %in% input$alpha_metrics_sel & !is.na(Value))
       
@@ -448,7 +470,6 @@ ampliconServer <- function(id, data_res) {
           axis.text.x = ggplot2::element_text(angle = 45, hjust = 1)
         )
       
-      # Sutvarkome spalvas (kad būtų nuoseklios)
       if (length(unique(df$Group)) <= 12) {
         p <- p + ggplot2::scale_fill_brewer(palette = "Set3")
       }
@@ -456,13 +477,10 @@ ampliconServer <- function(id, data_res) {
       plotly::ggplotly(p, tooltip = "text")
     })
     
-    # --- BETA DIVERSITY ---
-    
     observe({
       m <- data_res$meta()
       choices <- c("Uniform" = "none", "Taxon Abundance" = "tax", "Dominant Taxon (Discrete Colors)" = "dominant")
       
-      # Jei metaduomenys egzistuoja, pridedame "Metadata Category"
       if (!is.null(m) && ncol(m) > 0) {
         choices <- c(choices, "Metadata Category" = "meta")
       }
@@ -472,15 +490,13 @@ ampliconServer <- function(id, data_res) {
     })
     
     
-    # Pagalbinė funkcija mėginių sujungimui (įdėti serverio pradžioje)
+    # Attach metadata columns to beta coordinates via best-matching sample IDs
     get_merged_beta_data <- function(pcoa_df, meta_df) {
-      # Saugus patikrinimas: jei meta_df nėra arba jis neturi eilučių
       if (is.null(meta_df) || inherits(meta_df, "try-error") || nrow(as.data.frame(meta_df)) == 0) {
         return(pcoa_df)
       }
       
       m <- as.data.frame(meta_df)
-      # Ieškome ID stulpelio
       found_id <- NULL
       if (any(pcoa_df$Sample %in% rownames(m))) {
         m$INTERNAL_ID <- rownames(m)
@@ -500,7 +516,7 @@ ampliconServer <- function(id, data_res) {
       dplyr::left_join(pcoa_df, m, by = c("Sample" = "INTERNAL_ID"))
     }
     
-    # Dinaminis UI spalvinimo kintamajam parinkti
+    # UI: dynamic color-variable selector for Beta plot
     output$beta_color_var_ui <- renderUI({
       req(input$beta_color_type)
       
@@ -512,14 +528,13 @@ ampliconServer <- function(id, data_res) {
       } else if (input$beta_color_type == "tax") {
         req(processed_counts())
         taxa_choices <- colnames(processed_counts()$matrix)
-        # NAUJA: multiple = TRUE ir parinktis "Pasirinkti visus" per placeholder/UI
         selectizeInput(ns("beta_color_taxon"), "Select Taxon (or Taxa):", 
                        choices = taxa_choices, 
-                       multiple = TRUE, # Leidžiame pasirinkti daug
+                       multiple = TRUE,
                        options = list(
                          placeholder = 'Search and select one or more taxa...',
                          maxOptions = 1000,
-                         plugins = list('remove_button') # Leidžia lengvai ištrinti pasirinkimą
+                         plugins = list('remove_button')
                        ))
       } else {
         NULL
@@ -527,33 +542,29 @@ ampliconServer <- function(id, data_res) {
     })
     
     
+    # PCoA coordinates and explained variance for selected beta distance
     beta_res <- reactive({
       req(processed_counts(), input$beta_metric)
       metric <- input$beta_metric
       
-      # 1. Jei tai paprasti metodai (Bray/Jaccard)
       if (!metric %in% c("unifrac", "wunifrac")) {
         mat <- processed_counts()$matrix
         dist_mat <- vegan::vegdist(mat, method = metric, binary = (metric == "jaccard"))
       } 
-      # 2. Jei tai UniFrac (reikia medžio)
       else {
         req(data_res$tree(), data_res$abundance())
         ab <- data_res$abundance()
         tree_raw <- data_res$tree()
         
-        # Užtikrinam tipų sutapimą
         ab$tax_id <- as.character(ab$tax_id)
         tree_raw$tip.label <- as.character(tree_raw$tip.label)
         
-        # Surandam bendrus ID
         common_ids <- intersect(ab$tax_id, tree_raw$tip.label)
         if (length(common_ids) < 2) {
           showNotification("Per mažai bendrų taksonų tarp medžio ir duomenų!", type = "error")
           return(NULL)
         }
         
-        # Paruošiam matrica UniFrac skaičiavimui
         sample_cols <- names(ab)[sapply(ab, is.numeric) & names(ab) != "tax_id"]
         
         mat_ids <- ab %>% 
@@ -566,23 +577,18 @@ ampliconServer <- function(id, data_res) {
           tibble::column_to_rownames("sample") %>% 
           as.matrix()
         
-        # SVARBU: Pašalinam mėginius, kurie turi 0 reads po taksonų filtravimo
-        # Weighted UniFrac lūžta, jei mėginio suma yra 0
         mat_ids <- mat_ids[rowSums(mat_ids) > 0, , drop = FALSE]
         if (nrow(mat_ids) < 2) {
           showNotification("Per mažai mėginių su duomenimis po filtravimo!", type = "warning")
           return(NULL)
         }
         
-        # Medžio paruošimas
         curr_tree <- ape::keep.tip(tree_raw, colnames(mat_ids))
         
-        # UniFrac BŪTINAI reikia šakninio medžio (Rooted tree)
         if (!ape::is.rooted(curr_tree)) {
           curr_tree <- phytools::midpoint.root(curr_tree)
         }
         
-        # Užtikrinam, kad medis neturi "multi-phy" (polytomies) ir turi briaunų ilgius
         curr_tree <- ape::multi2di(curr_tree)
         if (is.null(curr_tree$edge.length)) {
           curr_tree$edge.length <- rep(0.001, nrow(curr_tree$edge))
@@ -590,16 +596,13 @@ ampliconServer <- function(id, data_res) {
           curr_tree$edge.length[curr_tree$edge.length <= 0] <- 0.00001
         }
         
-        # Sukuriam phyloseq objektą
         ps <- phyloseq::phyloseq(
           phyloseq::otu_table(mat_ids, taxa_are_rows = FALSE), 
           phyloseq::phy_tree(curr_tree)
         )
         
-        # Skaičiuojam atstumus
         dist_mat <- tryCatch({
           if (metric == "wunifrac") {
-            # Weighted UniFrac geriausia skaičiuoti ant proporcijų
             ps_rel <- phyloseq::transform_sample_counts(ps, function(x) x / sum(x))
             phyloseq::UniFrac(ps_rel, weighted = TRUE, normalized = TRUE)
           } else {
@@ -613,7 +616,6 @@ ampliconServer <- function(id, data_res) {
       
       req(dist_mat)
       
-      # PCoA analizė
       pcoa_res <- cmdscale(dist_mat, k = 2, eig = TRUE, add = TRUE)
       points <- as.data.frame(pcoa_res$points)
       df <- data.frame(Sample = rownames(points), PC1 = points[, 1], PC2 = points[, 2])
@@ -625,12 +627,12 @@ ampliconServer <- function(id, data_res) {
       list(df = df, var = var_exp)
     })
     
+    # Output: Beta Diversity PCoA plot (optional biplot vectors)
     output$plot_beta_multi <- renderPlotly({
       req(beta_res())
       res <- beta_res()
       df <- res$df 
       
-      # Naudojame saugų metaduomenų gavimą
       m_data <- safe_meta()
       df <- get_merged_beta_data(df, m_data)
       
@@ -640,10 +642,8 @@ ampliconServer <- function(id, data_res) {
       is_numeric_color <- FALSE
       colors_to_use <- "Set1" 
       
-      # Nustatome spalvinimo tipą
       ctype <- input$beta_color_type
       
-      # JEI PASIRINKTA META, BET JOS NĖRA - GRĮŽTAM Į 'NONE'
       if (ctype == "meta" && (is.null(m_data) || is.null(input$beta_color_meta))) {
         ctype <- "none"
       }
@@ -654,7 +654,7 @@ ampliconServer <- function(id, data_res) {
         color_label <- "Grupė"
       } 
       else if (ctype == "meta") {
-        req(input$beta_color_meta) # Šis req sustabdys tik jei vartotojas ranka nieko nepasirinko dropdown'e
+        req(input$beta_color_meta)
         if (input$beta_color_meta %in% names(df)) {
           color_var <- df[[input$beta_color_meta]]
           color_label <- input$beta_color_meta
@@ -693,7 +693,6 @@ ampliconServer <- function(id, data_res) {
         colors_to_use <- unlist(rv_colors$map)
       }
       
-      # --- BRAIŽYMAS ---
       p <- plotly::plot_ly()
       
       if (is_numeric_color) {
@@ -711,7 +710,6 @@ ampliconServer <- function(id, data_res) {
         )
       }
       
-      # Biplot (strėlės) - lieka toks pat
       if (input$beta_show_biplot) {
         req(processed_counts())
         mat_rel <- sweep(as.matrix(processed_counts()$matrix), 1, rowSums(processed_counts()$matrix), "/")
@@ -743,10 +741,11 @@ ampliconServer <- function(id, data_res) {
       )
     })
     
-    # --- BAR & HEATMAP ---
-    # --- PAGALBINĖS FUNKCIJOS (galima dėti už serverio ribų arba serverio pradžioje) ---
-    
-    # 1. Funkcija baziniam Barplot sukurti
+    # -----------------------------
+    # 4) Taxonomic Bar Chart + Heatmap
+    # -----------------------------
+
+    # Base stacked barplot helper
     create_base_barplot <- function(df, cols, sample_order = NULL) {
       p <- plotly::plot_ly(
         df, 
@@ -759,7 +758,6 @@ ampliconServer <- function(id, data_res) {
         hoverinfo = "text", 
         text = ~paste0(taxon, ": ", round(rel_abund * 100, 2), "%")
       ) %>% 
-        # GERAI - pataisyta
         plotly::layout(
           barmode = "stack",
           yaxis = list(title = "Relative Abundance", tickformat = ".0%"),
@@ -777,19 +775,17 @@ ampliconServer <- function(id, data_res) {
       return(p)
     }
     
-    # 2. Funkcija dendrogramos braižymui
+    # Dendrogram helper aligned to sample labels
     create_dendro_plot <- function(hc, ordered_samples) {
       dendro_data <- ggdendro::dendro_data(hc)
       seg <- dendro_data$segments
       
-      # Vietoj skaičių (1, 2, 3) priskiriame tikrus pavadinimus pagal indeksą
       seg$x_label <- ordered_samples[round(seg$x)]
       seg$xend_label <- ordered_samples[round(seg$xend)]
       
       plotly::plot_ly() %>%
         plotly::add_segments(
           data = seg,
-          # Naudojame pavadinimus, o ne skaičius!
           x = ~x_label, y = ~y, xend = ~xend_label, yend = ~yend,
           line = list(color = "#444", width = 1.5),
           showlegend = FALSE,
@@ -814,8 +810,7 @@ ampliconServer <- function(id, data_res) {
         )
     }
     
-    # --- SHINY OUTPUT ---
-    
+    # Output: Taxonomic Bar Chart (normal or dendrogram-aligned)
     output$plot_bar <- renderPlotly({
       req(prepared_bar_data(), rv_colors$map, sample_order())
       
@@ -828,33 +823,28 @@ ampliconServer <- function(id, data_res) {
         return(create_base_barplot(df, cols, ord))
       }
       
-      # Dendrogramos atvejis
       tryCatch({
-        # A. Skaičiavimai
         mat <- processed_counts()$matrix
-        dist_mat <- vegan::vegdist(mat, method = input$beta_metric)
+        dist_mat <- calc_dist_matrix(mat, input$beta_metric, data_res$tree())
         hc <- hclust(dist_mat, method = "ward.D2")
         ordered_samples <- hc$labels[hc$order]
         
-        # Paruošiam faktorius duomenyse
         df$sample <- factor(df$sample, levels = ordered_samples)
         
-        # B. Grafikų kūrimas
         p_bar <- create_base_barplot(df, cols, ordered_samples)
         p_tree <- create_dendro_plot(hc, ordered_samples)
         
-        # C. Sujungimas
         plotly::subplot(p_bar, p_tree, nrows = 2, heights = c(0.8, 0.2),
                         shareX = FALSE, titleY = TRUE, margin = c(0.01, 0.01, 0.01, 0.08)) %>%
           plotly::layout(
-            xaxis = list(         # barplot ašis (apačioje) – su pavadinimais
+            xaxis = list(
               tickangle = 90,
               tickmode = "array",
               tickvals = ordered_samples,
               ticktext = ordered_samples,
               showticklabels = TRUE
             ),
-            xaxis2 = list(        # dendro ašis – be pavadinimų
+            xaxis2 = list(
               showticklabels = FALSE,
               categoryorder = "array",
               categoryarray = ordered_samples,
@@ -865,12 +855,12 @@ ampliconServer <- function(id, data_res) {
         
       }, error = function(e) {
         message("Dendrogram error: ", e)
-        # Fallback: jei dendrograma nepavyksta, braižom paprastą barplot
         create_base_barplot(df, cols) %>% 
           plotly::layout(title = "Dendrogram error - showing unsorted plot")
       })
     })
     
+    # Output: Heatmap (normal or dendrogram-aligned)
     output$plot_heatmap <- renderPlotly({
       req(processed_counts(), sample_order())
       mat <- as.matrix(processed_counts()$matrix)
@@ -879,7 +869,6 @@ ampliconServer <- function(id, data_res) {
       top_n_taxa <- names(sort(colMeans(mat_rel), decreasing = TRUE))[1:min(input$top_n, ncol(mat_rel))]
       
       if (input$sort_by != "dendro") {
-        # --- Paprastas atvejis (be dendrogramos) ---
         avail_samples <- intersect(sample_order(), rownames(mat_rel))
         mat_plot <- t(mat_rel[avail_samples, top_n_taxa, drop = FALSE])
         
@@ -903,18 +892,14 @@ ampliconServer <- function(id, data_res) {
           )
         
       } else {
-        # --- Dendrogramos atvejis ---
         tryCatch({
-          # 1. Klasterizacija (ta pati logika kaip bar plote)
-          dist_mat <- vegan::vegdist(mat, method = input$beta_metric)
+          dist_mat <- calc_dist_matrix(mat, input$beta_metric, data_res$tree())
           hc <- hclust(dist_mat, method = "ward.D2")
           ordered_samples <- hc$labels[hc$order]
           
-          # 2. Paruošiame matricą tinkama tvarka
           avail_samples <- intersect(ordered_samples, rownames(mat_rel))
           mat_plot <- t(mat_rel[avail_samples, top_n_taxa, drop = FALSE])
           
-          # 3. Heatmap grafikas
           p_heat <- plotly::plot_ly(
             x = colnames(mat_plot),
             y = rownames(mat_plot),
@@ -936,10 +921,8 @@ ampliconServer <- function(id, data_res) {
               margin = list(b = 150, l = 150)
             )
           
-          # 4. Dendrograma (ta pati funkcija kaip bar plote)
           p_tree <- create_dendro_plot(hc, avail_samples)
           
-          # 5. Subplot: dendrograma viršuje, heatmap apačioje
           plotly::subplot(
             p_heat, p_tree,
             nrows = 2,
@@ -949,13 +932,13 @@ ampliconServer <- function(id, data_res) {
             margin = c(0.01, 0.01, 0.01, 0.08)
           ) %>%
             plotly::layout(
-              xaxis2 = list(          # dendro ašis – be pavadinimų
+              xaxis2 = list(
                 showticklabels = FALSE,
                 categoryorder = "array",
                 categoryarray = avail_samples,
                 matches = "x"
               ),
-              xaxis = list(         # heatmap ašis – su pavadinimais
+              xaxis = list(
                 tickangle = 90,
                 tickmode = "array",
                 tickvals = avail_samples,
@@ -968,7 +951,6 @@ ampliconServer <- function(id, data_res) {
           
         }, error = function(e) {
           message("Heatmap dendrogram error: ", e)
-          # Fallback – paprastas heatmap be dendrogramos
           avail_samples <- intersect(sample_order(), rownames(mat_rel))
           mat_plot <- t(mat_rel[avail_samples, top_n_taxa, drop = FALSE])
           
@@ -988,59 +970,56 @@ ampliconServer <- function(id, data_res) {
       }
     })
     
-    # --- METADUOMENŲ STULPELIŲ ATNAUJINIMAS ---
+    # -----------------------------
+    # 5) Metadata Analysis
+    # -----------------------------
+
+    # Populate metadata axes/facet selectors from current metadata table
     observe({
       req(data_res$meta)
       m <- data_res$meta()
       req(m)
       
       meta_cols <- names(m)
-      # Pridedame "Sample Name" kaip pirmą pasirinkimą
       updateSelectInput(session, "meta_x", 
                         choices = c("Sample Name" = "INTERNAL_SAMPLE_ID", meta_cols))
       updateSelectInput(session, "meta_facet_row", choices = c("None" = ".", meta_cols))
       updateSelectInput(session, "meta_facet_col", choices = c("None" = ".", meta_cols))
     })
     
-    # Sukuriam sąrašą stulpelių, kurie šiuo metu naudojami grafike
+    # Metadata columns currently active in x-axis or facets
     active_meta_cols <- reactive({
       cols <- c(input$meta_x, input$meta_facet_row, input$meta_facet_col)
-      # Pašalinam tuščius ir vidinius ID stulpelius
       unique(cols[cols != "." & cols != "INTERNAL_SAMPLE_ID"])
     })
     
-    # Generuojame filtrus pasirinktiems stulpeliams
+    # UI: value-level filters for active metadata columns
     output$meta_val_filters_ui <- renderUI({
       req(active_meta_cols(), data_res$meta())
       m <- as.data.frame(data_res$meta())
       
       tagList(
         lapply(active_meta_cols(), function(col_name) {
-          # Paimam unikalias reikšmes iš stulpelio
           vals <- sort(unique(as.character(m[[col_name]])))
           
-          # Sukuriam ID filtrui (svarbu saugiai apdoroti pavadinimą)
           clean_id <- paste0("filter_val_", gsub("[^A-Za-z0-9]", "_", col_name))
           
           selectizeInput(ns(clean_id), 
                          label = paste("Keep in:", col_name),
                          choices = vals, 
-                         selected = vals, # Pagal nutylėjimą pažymėta viskas
+                         selected = vals,
                          multiple = TRUE,
                          options = list(plugins = list('remove_button')))
         })
       )
     })
     
-    
-    # --- DUOMENŲ PARUOŠIMAS GRAFIKUI (Saugus su visais simboliais) ---
+    # Data preparation for metadata-stratified stacked composition chart
     metadata_plot_data <- reactive({
       req(processed_counts(), data_res$meta, input$meta_x)
       m <- as.data.frame(data_res$meta())
       ld <- processed_counts()$long
       
-      # 1. Taksonomijos ir Metaduomenų paruošimas (kaip anksčiau)
-      # ... [jūsų esamas ld ir meta_df paruošimas] ...
       meta_df <- m
       meta_df$INTERNAL_SAMPLE_ID <- rownames(m)
       for(col in names(m)) {
@@ -1053,24 +1032,16 @@ ampliconServer <- function(id, data_res) {
       plot_df <- ld %>%
         dplyr::inner_join(meta_df, by = c("sample" = "INTERNAL_SAMPLE_ID"))
       
-      # --- NAUJAS ŽINGSNIS: FILTRAVIMAS PAGAL REIKŠMES ---
       for(col_name in active_meta_cols()) {
         clean_id <- paste0("filter_val_", gsub("[^A-Za-z0-9]", "_", col_name))
         selected_vals <- input[[clean_id]]
         
-        # Jei vartotojas pasirinko specifines reikšmes, filtruojame
         if (!is.null(selected_vals)) {
           plot_df <- plot_df %>% dplyr::filter(.data[[col_name]] %in% selected_vals)
         }
       }
-      # --------------------------------------------------
       
-      # 2. Skaičiavimas (rel_abund ir grupavimas kaip anksčiau)
-      # ... [tolimesnė jūsų skaičiavimo logika] ...
-      
-      # Galutinis skaičiavimas:
       if (input$meta_x == "INTERNAL_SAMPLE_ID" || input$meta_show_points) {
-        # Individualūs mėginiai...
         group_vars <- c("sample", "taxon")
         if(input$meta_facet_row != ".") group_vars <- c(group_vars, input$meta_facet_row)
         if(input$meta_facet_col != ".") group_vars <- c(group_vars, input$meta_facet_col)
@@ -1082,7 +1053,6 @@ ampliconServer <- function(id, data_res) {
           dplyr::summarise(plot_value = sum(rel_abund), .groups = "drop") %>%
           dplyr::rename(display_x = sample)
       } else {
-        # Grupės vidurkis...
         group_vars <- c(input$meta_x, "taxon")
         if(input$meta_facet_row != ".") group_vars <- c(group_vars, input$meta_facet_row)
         if(input$meta_facet_col != ".") group_vars <- c(group_vars, input$meta_facet_col)
@@ -1097,18 +1067,15 @@ ampliconServer <- function(id, data_res) {
       final_df
     })
     
-    # --- BRAIŽYMAS (Atsparus kableliams, tarpams ir brūkšneliams) ---
+    # Output: Metadata Analysis stacked bar chart
     output$plot_metadata_bar <- renderPlotly({
       req(metadata_plot_data(), rv_colors$map)
       df <- metadata_plot_data()
       
-      # 1. SVARBU: Pašaliname taksonus, kurių kiekis yra 0 arba kurie neegzistuoja šiame pogrupyje
       df <- df %>% dplyr::filter(plot_value > 0)
       
-      # Sutvarkome faktorių: paliekame tik tuos lygius, kurie realiai yra duomenyse
       df$taxon <- factor(df$taxon, levels = intersect(names(rv_colors$map), unique(df$taxon)))
       
-      # 2. Išfiltruojame spalvų žemėlapį: paimame spalvas tik tiems taksonams, kurie yra 'df'
       all_cols <- unlist(rv_colors$map)
       present_taxa <- as.character(unique(df$taxon))
       cols <- all_cols[names(all_cols) %in% present_taxa]
@@ -1119,24 +1086,20 @@ ampliconServer <- function(id, data_res) {
         x = display_x, 
         y = plot_value, 
         fill = taxon,
-        # tooltip tekstas
         text = paste0("Sample/Group: ", display_x, "<br>Type: ", taxon, "<br>Part: ", round(plot_value*100, 2), "%")
       )) +
         ggplot2::geom_bar(stat = "identity", position = "stack", width = 0.8) +
-        # Naudojame išfiltruotas spalvas
         ggplot2::scale_fill_manual(values = cols) +
         ggplot2::labs(y = y_label, x = NULL, fill = "Rūšis") +
         ggplot2::theme_bw() +
         ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 90, vjust = 0.5, size = 8))
       
-      # Saugus faceting (lieka toks pat)
       if(input$meta_facet_row != "." || input$meta_facet_col != ".") {
         safe_row <- if(input$meta_facet_row == ".") "." else paste0("`", input$meta_facet_row, "`")
         safe_col <- if(input$meta_facet_col == ".") "." else paste0("`", input$meta_facet_col, "`")
         p <- p + ggplot2::facet_grid(as.formula(paste(safe_row, "~", safe_col)), scales = "free_x", space = "free_x")
       }
       
-      # Konvertuojame į plotly
       plotly::ggplotly(p, tooltip = "text") %>% 
         plotly::layout(
           legend = list(orientation = "h", y = -0.3),

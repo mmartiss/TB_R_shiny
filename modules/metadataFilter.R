@@ -1,6 +1,9 @@
 metadataFilterUI <- function(id) {
   ns <- NS(id)
   tagList(
+    # ==================================================
+    # Metadata filter UI
+    # ==================================================
     tags$head(
       tags$style(HTML("
         .filter-badge {
@@ -23,6 +26,7 @@ metadataFilterUI <- function(id) {
     h3("Metadata Explorer & Filter"),
     wellPanel(
       fluidRow(
+        # Core table actions
         column(3,
                tags$b("Column Management"),
                uiOutput(ns("col_remove_ui")),
@@ -49,7 +53,7 @@ metadataFilterUI <- function(id) {
       ),
       hr(),
       fluidRow(
-        # --- Batch Replace ---
+        # Batch replace, global filter, and new column tools
         column(4,
                tags$b("Batch Replace"),
                uiOutput(ns("replace_col_ui")),
@@ -57,8 +61,7 @@ metadataFilterUI <- function(id) {
                textInput(ns("replace_val_new"), NULL, placeholder="New value"),
                actionButton(ns("btn_replace"), "Replace All", class="btn-warning btn-sm")
         ),
-        
-        # --- Global Value Filter (numeric + text) ---
+
         column(4,
                tags$b("Global Value Filter (Across Columns)"),
                uiOutput(ns("global_ignore_ui")),
@@ -90,8 +93,7 @@ metadataFilterUI <- function(id) {
                             inline = TRUE),
                actionButton(ns("btn_global_filter"), "Apply Global Filter", class="btn-success btn-sm")
         ),
-        
-        # --- Prideti stulpeli ---
+
         column(4,
                tags$b("Add New Column"),
                textInput(ns("new_col_name_add"), "Column name", placeholder = "e.g. group"),
@@ -113,10 +115,12 @@ metadataFilterUI <- function(id) {
       )
     ),
     
+    # Active filter summary
     tags$b("Active Metadata Filters:"),
     tags$div(class="filter-container", uiOutput(ns("active_filters_ui"))),
     br(),
     
+    # Reset, export, and confirm actions
     fluidRow(
       column(12,
              actionButton(ns("btn_reset"), "Reset Metadata", class="btn-warning btn-sm"),
@@ -137,25 +141,36 @@ metadataFilterServer <- function(id, original_metadata) {
     ns <- session$ns
     current_meta   <- reactiveVal(NULL)
     active_filters <- reactiveVal(list())
+
+    # ==================================================
+    # Shared helpers
+    # ==================================================
     
+    # Shorten long labels for compact UI elements
     shorten <- function(x, n = 25) {
       ifelse(nchar(x) > n, paste0(substr(x, 1, n - 3), "..."), x)
     }
     
+    # Generate a unique filter identifier
     get_uid <- function() paste0("f_", as.numeric(Sys.time()) * 1000, floor(runif(1, 1, 1000)))
     
+    # Current metadata column names with shortened display labels
     get_choices <- reactive({
       req(current_meta())
       nms <- names(current_meta())
       setNames(nms, shorten(nms))
     })
     
+    # Initialize module state from upstream metadata input
     observe({
       req(original_metadata())
       current_meta(original_metadata())
     })
-    
-    # ── Batch Replace ──────────────────────────────────────────────────────────
+
+    # ==================================================
+    # Table editing controls
+    # ==================================================
+
     output$replace_col_ui <- renderUI({
       selectInput(ns("replace_col"), NULL, choices = get_choices())
     })
@@ -174,8 +189,11 @@ metadataFilterServer <- function(id, original_metadata) {
       current_meta(df)
       showNotification(paste0("Replaced '", input$replace_val_old, "' -> '", input$replace_val_new, "'"), type = "message")
     })
-    
-    # ── Column Management ──────────────────────────────────────────────────────
+
+    # ==================================================
+    # Column management
+    # ==================================================
+
     output$col_remove_ui <- renderUI({
       req(current_meta())
       selectizeInput(ns("cols_remove"), NULL, choices = get_choices(), multiple = TRUE,
@@ -213,8 +231,11 @@ metadataFilterServer <- function(id, original_metadata) {
       idx <- order(df[[input$col_sort]], decreasing = (input$sort_dir == "desc"), na.last = TRUE)
       current_meta(df[idx, , drop = FALSE])
     })
-    
-    # ── Filter Rows (stulpelio filtras) ───────────────────────────────────────
+
+    # ==================================================
+    # Row filters
+    # ==================================================
+
     output$col_filter_ui <- renderUI({
       req(current_meta())
       selectInput(ns("col_filter"), NULL, choices = get_choices())
@@ -222,6 +243,10 @@ metadataFilterServer <- function(id, original_metadata) {
     
     output$filter_value_ui <- renderUI({
       req(current_meta(), input$col_filter)
+    # ==================================================
+    # Global filters
+    # ==================================================
+
       col_data <- current_meta()[[input$col_filter]]
       
       if (is.numeric(col_data)) {
@@ -240,6 +265,10 @@ metadataFilterServer <- function(id, original_metadata) {
     
     observeEvent(input$btn_filter, {
       req(input$col_filter, input$filter_val)
+    # ==================================================
+    # Add new columns
+    # ==================================================
+
       f_id    <- get_uid()
       filters <- active_filters()
       filters[[f_id]] <- list(
@@ -249,8 +278,7 @@ metadataFilterServer <- function(id, original_metadata) {
       )
       active_filters(filters)
     })
-    
-    # ── Global Value Filter ────────────────────────────────────────────────────
+
     output$global_ignore_ui <- renderUI({
       req(current_meta())
       selectizeInput(ns("global_ignore_cols"), "Ignore these columns:",
@@ -286,8 +314,7 @@ metadataFilterServer <- function(id, original_metadata) {
       }
       active_filters(filters)
     })
-    
-    # ── Add New Column ─────────────────────────────────────────────────────────
+
     output$copy_col_src_ui <- renderUI({
       req(current_meta())
       selectInput(ns("copy_col_src"), NULL, choices = get_choices())
@@ -313,8 +340,11 @@ metadataFilterServer <- function(id, original_metadata) {
       updateTextInput(session, "new_col_name_add", value = "")
       showNotification(paste0("Column '", col_name, "' added."), type = "message")
     })
-    
-    # ── Filtru salinimas ───────────────────────────────────────────────────────
+
+    # ==================================================
+    # Active filter registry
+    # ==================================================
+
     observe({
       filters <- active_filters()
       lapply(names(filters), function(f_id) {
@@ -326,6 +356,7 @@ metadataFilterServer <- function(id, original_metadata) {
       })
     })
     
+    # Human-readable summary of active filters
     output$active_filters_ui <- renderUI({
       filters <- active_filters()
       if (length(filters) == 0) return(tags$em("None"))
@@ -348,8 +379,8 @@ metadataFilterServer <- function(id, original_metadata) {
         )
       }))
     })
-    
-    # ── Pagalbine teksto palyginimo funkcija ───────────────────────────────────
+
+    # Normalize string matching for the global text filter
     apply_text_match <- function(x, op, val, case_sens) {
       s <- as.character(x)
       v <- val
@@ -363,8 +394,11 @@ metadataFilterServer <- function(id, original_metadata) {
              rep(FALSE, length(s))
       )
     }
-    
-    # ── Filtravimo logika ──────────────────────────────────────────────────────
+
+    # ==================================================
+    # Filter engine
+    # ==================================================
+
     filtered_metadata <- reactive({
       df      <- current_meta()
       req(df)
@@ -409,15 +443,18 @@ metadataFilterServer <- function(id, original_metadata) {
       }
       df
     })
-    
-    # ── Reset ──────────────────────────────────────────────────────────────────
+
+    # Reset to the original metadata and clear all filters
     observeEvent(input$btn_reset, {
       req(original_metadata())
       current_meta(original_metadata())
       active_filters(list())
     })
-    
-    # ── Lentele ───────────────────────────────────────────────────────────────
+
+    # ==================================================
+    # Outputs and exports
+    # ==================================================
+
     output$tbl <- renderDT({
       req(filtered_metadata())
       datatable(filtered_metadata(),
@@ -426,8 +463,7 @@ metadataFilterServer <- function(id, original_metadata) {
                 rownames = FALSE,
                 filter   = "top")
     })
-    
-    # ── Atsisiuntimas ─────────────────────────────────────────────────────────
+
     output$dl_csv <- downloadHandler(
       filename = function() paste0("metadata_", Sys.Date(), ".csv"),
       content  = function(file) write.csv(filtered_metadata(), file, row.names = FALSE)

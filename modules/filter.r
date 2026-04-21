@@ -1,14 +1,19 @@
 filterUI <- function(id, title = "Data Table") {
   ns <- NS(id)
   tagList(
+    # ==================================================
+    # Filter module UI
+    # ==================================================
     h4(title),
     fluidRow(
+      # Row 1: column actions and row filters
       column(3, tags$label("Remove columns"), uiOutput(ns("col_remove_ui")), actionButton(ns("btn_remove"), "Remove", class="btn-danger btn-sm")),
       column(3, tags$label("Sort by"), uiOutput(ns("col_sort_ui")), radioButtons(ns("sort_dir"), NULL, c("Asc"="asc","Desc"="desc"), inline=T), actionButton(ns("btn_sort"), "Sort", class="btn-primary btn-sm")),
       column(3, tags$label("Rename Column"), uiOutput(ns("col_rename_select_ui")), textInput(ns("new_col_name"), NULL, placeholder="New name"), actionButton(ns("btn_rename"), "Rename", class="btn-info btn-sm")),
       column(3, tags$label("Batch Replace"), uiOutput(ns("replace_col_ui")), uiOutput(ns("replace_val_old_ui")), textInput(ns("replace_val_new"), NULL, placeholder="New value"), actionButton(ns("btn_replace"), "Replace All", class="btn-warning btn-sm")),
       column(3, tags$label("Filter by specific column"), uiOutput(ns("col_filter_ui")), uiOutput(ns("filter_value_ui")), actionButton(ns("btn_filter"), "Filter Column", class="btn-primary btn-sm")),
       
+      # Row 2: global filter, read threshold, and taxonomy grouping
       column(4,
              tags$label("Global Value Filter (Across Columns)"),
              uiOutput(ns("global_ignore_ui")),
@@ -53,10 +58,13 @@ filterUI <- function(id, title = "Data Table") {
       )
     ),
     br(),
+    # Optional taxonomy join action
     uiOutput(ns("tax_join_ui")),
     br(),
+    # Active filter summary
     tags$label("Active filters:"), uiOutput(ns("active_filters_ui")),
     br(),
+    # Export and analysis handoff actions
     fluidRow(
       column(12,
              actionButton(ns("btn_reset"), "Reset all", class="btn-warning btn-sm"),
@@ -76,6 +84,10 @@ filterServer <- function(id, original_data, tax_data = NULL) {
     ns <- session$ns
     current_data   <- reactiveVal(NULL)
     active_filters <- reactiveVal(list())
+
+    # ==================================================
+    # Shared helpers
+    # ==================================================
     
     observeEvent(original_data(), {
       req(original_data())
@@ -104,18 +116,20 @@ filterServer <- function(id, original_data, tax_data = NULL) {
              rep(FALSE, length(s))
       )
     }
+
+    # ==================================================
+    # Filter registry and actions
+    # ==================================================
     
     observeEvent(input$btn_group_taxa, {
       req(input$group_level)
       filters <- active_filters()
-      
-      # Pašaliname senus grupavimo filtrus prieš pridedant naują
+
       new_filters <- list()
       for(id in names(filters)) {
         if (filters[[id]]$type != "group") new_filters[[id]] <- filters[[id]]
       }
-      
-      # Pridedame naują grupavimą
+
       f_id <- get_uid()
       new_filters[[f_id]] <- list(
         type = "group",
@@ -127,6 +141,7 @@ filterServer <- function(id, original_data, tax_data = NULL) {
     
     observeEvent(input$btn_read_filter, {
       req(input$min_total_reads)
+    # Add a minimum read-count filter
       f_id <- get_uid()
       filters <- active_filters()
       
@@ -138,60 +153,48 @@ filterServer <- function(id, original_data, tax_data = NULL) {
       active_filters(filters)
     })
     
-    
-    
+    # Show join control only when taxonomy data is available
     output$tax_join_ui <- renderUI({
       req(tax_data())
       actionButton(ns("btn_do_tax_join"), "Add Species Column", class = "btn-info btn-sm")
     })
-    
-    # Sujungimo veiksmas
+
+    # Join taxonomy table and create a combined Species_Full label
     observeEvent(input$btn_do_tax_join, {
       df <- current_data()
       tax <- tax_data()
       req(df, tax)
-      
-      # 1. Patikriname ar yra tax_id
+
       if (!"tax_id" %in% names(df)) {
         showNotification("The 'tax_id' column was not found in the table", type = "error")
         return()
       }
-      
-      # 2. Paruošiame IDs
+
       df$tax_id <- as.character(df$tax_id)
       tax$tax_id <- as.character(tax$tax_id)
-      
-      # 3. Sujungiam duomenis
+
       res <- dplyr::left_join(df, tax, by = "tax_id")
-      
-      # 4. Sukuriam Species stulpelį ir išvalom nereikalingus taksonomijos stulpelius
-      # Tikriname, ar taksonomijos faile yra reikiami stulpeliai (mažosiomis raidėmis)
+
       if ("genus" %in% names(res) && "species" %in% names(res)) {
-        
-        # Sukuriam apjungtą pavadinimą
+
         res$Species_Full <- paste(res$genus, res$species)
         res$Species_Full <- gsub("NA NA|NA|Unknown Unknown", "Unknown", res$Species_Full)
-        
-        # Surandame visus stulpelius, kurie atkeliavo iš 'tax' failo (išskyrus tax_id ir mūsų naują Species_Full)
+
         tax_cols_to_remove <- setdiff(names(tax), "tax_id")
-        
-        # Pašaliname tuos papildomus stulpelius (Phylum, Order ir t.t.), kad liktų tik Species_Full
+
         res <- res[, !names(res) %in% tax_cols_to_remove]
-        
-        # 5. PERKELIAME stulpelį šalia tax_id
-        # Naudojame relocate funkciją (iš dplyr)
+
         res <- res %>% dplyr::relocate(Species_Full, .after = tax_id)
-        
-        # Atnaujiname duomenis
+
         current_data(res)
         showNotification("The Species column has been successfully added next to tax_id", type = "message")
-        
+
       } else {
         showNotification("The taxonomy file does not contain 'genus' or 'species' columns", type = "error")
       }
     })
     
-    
+    # Add a column-specific row filter
     observeEvent(input$btn_filter, {
       req(input$col_filter, input$filter_val)
       f_id <- get_uid()
@@ -206,6 +209,7 @@ filterServer <- function(id, original_data, tax_data = NULL) {
       active_filters(filters)
     })
     
+    # Add a global value filter across multiple columns
     observeEvent(input$btn_global_filter, {
       f_id <- get_uid()
       filters <- active_filters()
@@ -236,6 +240,7 @@ filterServer <- function(id, original_data, tax_data = NULL) {
       active_filters(filters)
     })
     
+    # Remove active filter chips on demand
     observe({
       filters <- active_filters()
       lapply(names(filters), function(f_id) {
@@ -247,6 +252,7 @@ filterServer <- function(id, original_data, tax_data = NULL) {
       })
     })
     
+    # Human-readable active filter badges
     output$active_filters_ui <- renderUI({
       filters <- active_filters()
       if (length(filters) == 0) return(tags$em("None"))
@@ -275,16 +281,17 @@ filterServer <- function(id, original_data, tax_data = NULL) {
       }))
     })
     
+    # ==================================================
+    # Filter engine (applies all active rules)
+    # ==================================================
     filtered_result <- reactive({
       df <- current_data()
       req(df)
       filters <- active_filters()
-      
-      # 1. PRITAIKOME STANDARTINIUS FILTRUS (išskyrus grupavimą)
+
       for (f in filters) {
         if (is.null(f$type) || f$type == "group") next
-        
-        # Stulpelio filtras
+
         if (f$type == "column") {
           if (!f$col %in% names(df)) next
           vals <- df[[f$col]]
@@ -294,7 +301,7 @@ filterServer <- function(id, original_data, tax_data = NULL) {
             df <- df[as.character(vals) %in% f$val, ]
           }
         } 
-        # Globalus filtras
+
         else if (f$type == "global") {
           target_cols <- setdiff(names(df), f$ignore)
           if (length(target_cols) == 0) next
@@ -309,7 +316,6 @@ filterServer <- function(id, original_data, tax_data = NULL) {
               df <- df[keep, ]
             }
           } else {
-            # Tekstinis globalus filtras
             logic_list <- lapply(target_cols, function(c) apply_text_match(df[[c]], f$text_op, f$val, f$case_sens))
             logic_mat <- do.call(cbind, logic_list)
             logic_mat[is.na(logic_mat)] <- FALSE
@@ -317,7 +323,7 @@ filterServer <- function(id, original_data, tax_data = NULL) {
             df <- df[keep, ]
           }
         }
-        # Reads filtras
+
         else if (f$type == "min_reads") {
           num_cols <- names(df)[vapply(df, is.numeric, logical(1))]
           num_cols <- setdiff(num_cols, c("tax_id", "Species_Full"))
@@ -326,9 +332,7 @@ filterServer <- function(id, original_data, tax_data = NULL) {
           }
         }
       }
-      
-      # 2. PRITAIKOME GRUPAVIMĄ (PASKUTINIS ŽINGSNIS)
-      # Ieškome ar yra bent vienas grupavimo filtras
+
       group_filter <- NULL
       for (f in filters) {
         if (identical(f$type, "group")) {
@@ -341,29 +345,23 @@ filterServer <- function(id, original_data, tax_data = NULL) {
         req(tax_data())
         level <- group_filter$level
         tax <- tax_data()
-        
-        # Saugus sujungimas
+
         if ("tax_id" %in% names(df) && "tax_id" %in% names(tax)) {
           df$tax_id <- as.character(df$tax_id)
           tax$tax_id <- as.character(tax$tax_id)
-          
-          # Prijungiam tik reikiamą taksonomijos stulpelį
+
           tax_sub <- tax[, c("tax_id", level), drop = FALSE]
           df <- dplyr::left_join(df, tax_sub, by = "tax_id")
-          
-          # Sutvarkom Unknown
+
           df[[level]][is.na(df[[level]]) | df[[level]] == ""] <- "Unknown"
-          
-          # Surandam mėginius sumavimui
+
           num_cols <- names(df)[vapply(df, is.numeric, logical(1))]
           sample_cols <- setdiff(num_cols, "tax_id")
-          
-          # Agreguojame
+
           df <- df %>%
             dplyr::group_by(!!dplyr::sym(level)) %>%
             dplyr::summarise(dplyr::across(dplyr::all_of(sample_cols), sum, na.rm = TRUE), .groups = "drop")
-          
-          # Rūšiuojame pagal sumą (aukščiausi viršuje)
+
           if (length(sample_cols) > 0) {
             total_reads <- rowSums(df[, sample_cols, drop = FALSE])
             df <- df[order(total_reads, decreasing = TRUE), ]
@@ -373,26 +371,25 @@ filterServer <- function(id, original_data, tax_data = NULL) {
       
       return(df)
     })
-    
-    # 1. Stulpelių šalinimo pasirinkimas
+
+    # ==================================================
+    # Table controls and dynamic selectors
+    # ==================================================
     output$col_remove_ui <- renderUI({
       req(current_data())
       selectInput(ns("cols_to_remove"), NULL, choices = names(current_data()), multiple = TRUE)
     })
-    
-    # 2. Rūšiavimo pasirinkimas (pagal tai, kas matoma lentelėje)
+
     output$col_sort_ui <- renderUI({
       req(filtered_result())
       selectInput(ns("col_sort"), NULL, choices = names(filtered_result()))
     })
-    
-    # 3. Pervadinimo pasirinkimas
+
     output$col_rename_select_ui <- renderUI({
       req(current_data())
       selectInput(ns("col_to_rename"), NULL, choices = names(current_data()))
     })
-    
-    # 4. Batch Replace pasirinkimai
+
     output$replace_col_ui <- renderUI({
       req(current_data())
       selectInput(ns("replace_col"), NULL, choices = names(current_data()))
@@ -403,14 +400,12 @@ filterServer <- function(id, original_data, tax_data = NULL) {
       vals <- sort(unique(as.character(current_data()[[input$replace_col]])))
       selectInput(ns("replace_val_old"), NULL, choices = vals)
     })
-    
-    # 5. Filtravimo pagal stulpelį pasirinkimas
+
     output$col_filter_ui <- renderUI({
       req(filtered_result())
       selectInput(ns("col_filter"), NULL, choices = names(filtered_result()))
     })
-    
-    # 6. Dinaminis filtravimo reikšmių pasirinkimas (Slider arba Select)
+
     output$filter_value_ui <- renderUI({
       req(input$col_filter, filtered_result())
       df <- filtered_result()
@@ -425,8 +420,7 @@ filterServer <- function(id, original_data, tax_data = NULL) {
                        options = list(plugins = list('remove_button')))
       }
     })
-    
-    # 7. Globalaus filtro ignoravimo sąrašas
+
     output$global_ignore_ui <- renderUI({
       req(current_data())
       selectizeInput(ns("global_ignore_cols"), NULL, 
@@ -434,8 +428,7 @@ filterServer <- function(id, original_data, tax_data = NULL) {
                      options = list(plugins = list('remove_button')))
     })
     
-    # --- PAPILDOMAI: Kad mygtukai 'Remove', 'Rename', 'Sort' veiktų ---
-    
+    # Column removal
     observeEvent(input$btn_remove, {
       req(input$cols_to_remove)
       df <- current_data()
@@ -458,21 +451,24 @@ filterServer <- function(id, original_data, tax_data = NULL) {
       current_data(df)
     })
     
+    # Sort the current table
     observeEvent(input$btn_sort, {
       req(input$col_sort)
       df <- current_data()
       ord <- if(input$sort_dir == "asc") order(df[[input$col_sort]]) else order(df[[input$col_sort]], decreasing = TRUE)
       current_data(df[ord, , drop = FALSE])
     })
-    
-    
-    
+
+    # Reset back to the original input table
     observeEvent(input$btn_reset, {
       req(original_data())
       current_data(original_data())
       active_filters(list())
     })
     
+    # ==================================================
+    # Outputs: table and exports
+    # ==================================================
     output$tbl <- renderDT({
       req(filtered_result())
       datatable(filtered_result(),
@@ -492,6 +488,7 @@ filterServer <- function(id, original_data, tax_data = NULL) {
       content  = function(file) write.table(filtered_result(), file, sep="\t", row.names=FALSE, quote=FALSE)
     )
     
+    # Data exposed to the parent app
     return(list(
       data    = filtered_result,
       btn_use = reactive(input$btn_use)

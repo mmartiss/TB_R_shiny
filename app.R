@@ -1,4 +1,4 @@
-setwd("~/MartynasLib/Universitetas/4 kursas/8_semestras/praktika/mano_r")
+#setwd("~/MartynasLib/Universitetas/4 kursas/8_semestras/praktika/mano_r")
 
 library(shiny)
 library(shinydashboard)
