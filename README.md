@@ -201,6 +201,10 @@ Pasirinkimas: `Metadata filtering`.
 
 ### 3. Amplicon analizė
 
+- Konfigūracija: Pasirinkite norimus parametrus viršutiniame skydelyje.
+- Vykdymas: Būtina paspausti žalią mygtuką `Update All Analysis`. Tik jį paspaudus programa atliks skaičiavimus ir sugeneruos/atnaujins visų kortelių (Bar Chart, Heatmap, Alpha, Beta, Metadata) grafikus.
+
+
 ### 3.1 Pagrindiniai nustatymai
 
 - Taxonomic level: Pasirenkamas taksonominis gylis (nuo species iki phylum), kuriame bus atliekama analizė.
@@ -238,6 +242,27 @@ Vizualizuoja taksonų gausumą spalvų skale.
   - Grupavimas: Laukelyje Group By (Metadata) pasirinkite stulpelį iš savo metaduomenų (pvz., ligos stadija, lytis), kad mėginiai būtų sugrupuoti į dėžines diagramas (Boxplots).
   - Sub-filtravimas: Laukelyje Select values galite atsirinkti tik tam tikras grupes (pvz., palikti tik „Control“ grupę).
 - Reikalavimas: Grupavimo funkcijos neveiks be įkeltų metaduomenų failo.
+
+### 3.5 Beta Diversity (Beta įvairovė)
+Rodo mėginių tarpusavio panašumą PCoA (Principal Coordinates Analysis) grafike.
+- Ką galima daryti: Matyti, ar mėginiai formuoti klasterius (grupes) pagal panašumą.
+- Valdymas:
+  - Distance Metric: Pasirinkite metodą (Bray-Curtis, Jaccard). UniFrac pasirinkimai veiks tik jei įkėlėte filogenetinį medį.
+  - Color Samples By: Nuspalvinkite taškus pagal:
+    - Metadata Category (reikia metaduomenų).
+    - Taxon Abundance – nuspalvina mėginius pagal jūsų pasirinktos konkrečios bakterijos kiekį (pasirinkite bakteriją Select Taxon laukelyje).
+    - Dominant Taxon – nuspalvina pagal tai, kokia bakterija tame mėginyje gausiausia.
+- Reikalavimas: UniFrac atstumams būtinas .nwk medis.
+
+### 3.6 Metadata Analysis (Metaduomenų analizė)
+Grafinis taksonų sudėties vidurkis jūsų pasirinktose grupėse.
+- Ką galima daryti: Matyti ne kiekvieną mėginį atskirai, o bendrą vaizdą pagal kategorijas.
+- Valdymas:
+  - X Axis (Category): Pasirinkite metaduomenų stulpelį, kuris bus apačioje (pvz., amžiaus grupė). Programa susumuos visų tos grupės mėginių vidurkius.
+  - Facet Row / Facet Column: Galimybė suskaidyti grafiką į langelius pagal papildomus metaduomenis (pvz., viršuje – amžius, šone – lytis).
+  - Show individual samples: Pažymėkite, jei norite matyti ne vidurkį, o visus tos grupės mėginius sudėtus vieną šalia kito.
+  - Keep in: Galite pasirinkti, kurias konkrečias kategorijų vertes įtraukti į grafiką.
+- Reikalavimas: Ši kortelė bus visiškai tuščia, jei neįkėlėte metaduomenų failo.
 
 ---
 
