@@ -28,9 +28,8 @@ ui <- dashboardPage(
           box(
             width = 12, 
             status = "primary", 
-            solidHeader = TRUE, 
-            title = "Informacija apie programą",
-            includeMarkdown("instructions.md")
+            solidHeader = TRUE,
+            includeMarkdown("README.md")
           )
         )
       ),
