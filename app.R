@@ -15,6 +15,7 @@ library(phyloseq)
 library(phytools)
 library(ggtree)
 library(ggdendro)
+library(markdown)
 
 source("modules/upload.r")
 source("modules/filter.r")
