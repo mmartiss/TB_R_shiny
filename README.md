@@ -95,6 +95,14 @@ Projektas organizuotas modulių principu, užtikrinant kodo skaitomumą ir lengv
 
 ## Naudojimosi instrukcija
 
+1. `File upload` - Duomenų įkėlimas
+2. `Abundance filtering` - EMU duomenų filtravimas
+3. `Counts filtering` - EMU duomenų filtravimas
+4. `Taxonomy filtering` - EMU duomenų filtravimas
+5. `Metadata filtering` - Metaduomenų filtravimas
+6. `Amplicon`
+
+
 ### 1. Duomenų įkėlimas
 
 Norėdami pradėti analizę, šoniniame meniu pasirinkite ir įkelkite šiuos failus:
@@ -109,12 +117,120 @@ Norėdami pradėti analizę, šoniniame meniu pasirinkite ir įkelkite šiuos fa
     *   *Pastaba:* Griežtų reikalavimų struktūrai nėra, tačiau rekomenduojama, kad mėginių ID sutaptų su nurodytais EMU rezultatuose.
 
 ####     Veikimo principas:
+1. Pasirinkite EMU failų skirtuką. `.tsv`, `.csv`, `;`
+2. Jei duomenys buvo keisti ir pirmoji eilutė nėra stulpelių pavadinimai, atžymėkite varnelę `First row is header`. Šitaip pirmasis stulpelis nebus traktuojamas kaip antraštė ir bus paemami duomenys.
 1.  Pasirinkę failus, būtinai paspauskite mygtuką **`Load Data`**.
 2.  **Duomenų saugumas:** Programa originalių jūsų failų nekeičia ir netrina. Visi veiksmai, filtravimai ir transformacijos atliekami tik kompiuterio operatyviojoje atmintyje, todėl originalūs duomenys išlieka saugūs.
 
 ### 2. Filtravimas
-* **EMU filtravimas:** Galite filtruoti duomenis pagal santykinį gausumą (relative abundance) arba specifinius taksonus.
-* **Metaduomenų filtravimas:** Pasirinkite tik tuos mėginius, kurie atitinka jūsų tyrimo kriterijus (pvz., tik tam tikros vietovės ar metų duomenis).
+
+Duomenų filtravimas NEPRIVALOMAS. Jei nenorite keisti ar tikrinti įkeltų duomenų galite tiesiai eiti prie 6 punkto `Amplicon`.
+
+Programą sudaro du pagrindiniai moduliai: `filter` ir `metadataFilter`. 
+
+### 2.1. EMU duomenų filtravimo modulis (`filter`)
+Šis modulis yra universalus ir programoje naudojamas **tris kartus** kaip trys nepriklausomi filtrai šiems duomenų rinkiniams:
+1.  **Santykinis gausumas (Abundance)** - `Abundance filtering`
+2.  **Skaitymų skaičius (Counts)** - `Counts filtering`
+3.  **Taksonomija (Taxonomy)** - `Taxonomy filtering`
+
+#### Lentelės struktūros valdymas
+Šios funkcijos keičia pačią lentelės formą:
+*   **Column Removal:** Galimybė pašalinti nereikalingus stulpelius (pvz., ištrinti mėginius, kurie nebus naudojami analizėje).
+*   **Sort:** Duomenų rūšiavimas pagal bet kurį pasirinktą stulpelį didėjimo arba mažėjimo tvarka.
+*   **Rename Column:** Interaktyvus stulpelių pavadinimų keitimas (patogu ruošiant grafikus).
+*   **Batch Replace:** Vertės keitimo funkcija visame stulpelyje (pvz., pakeisti "NA" į "0" arba pervadinti specifines vertes).
+
+#### Filtravimo mechanizmai
+Modulis palaiko „filtravimo istoriją“ – galite dėti kelis filtrus vieną ant kito, o vėliau juos po vieną pašalinti per „Active filters“ ženkliukus.
+
+*   **Column-Specific Filter:** 
+    *   *Skaitiniams duomenims:* Slankiklis (Slider) rėžiams nustatyti (pvz., rodyti tik tuos, kurių vertė nuo 10 iki 100).
+    *   *Tekstiniams duomenims:* Pasirinkimo sąrašas (Dropdown) konkrečioms vertėms atsirinkti.
+*   **Global Value Filter:** Filtruoja visą lentelę iš karto. Galima nustatyti taisyklę (pvz., palikti eilutę, jei *bent viename* stulpelyje vertė > 0.05). Palaiko tekstinį (contains, starts with) ir skaitinį režimus.
+*   **Min Total Reads Filter:** Pašalina taksonus, kurių bendra suma per visus mėginius nesiekia nustatytos ribos.
+
+#### Bioinformatinės funkcijos
+Specifinės funkcijos, pritaikytos mikrobiomo duomenims:
+*   **Taxonomy Join:** Iš įkelto taksonomijos failo, funkcija pagal `tax_id` prijungia rūšies pavadinimą ir sukuria `Species_Full` stulpelį (Genus + Species).
+*   **Group by Taxonomy:** Duomenų agregavimas. Galite sumuoti visus skaitymus pasirinktame lygmenyje (pvz., sumuoti visas rūšis į šeimų (family) ar genčių (genus) lygmenį).
+
+#### Eksportas ir valdymas
+*   **Reset All:** Vieno paspaudimu grįžtama prie pradinių įkeltų duomenų.
+*   **Eksportas:** Apdorotą lentelę bet kuriame etape galima atsisiųsti `.csv` arba `.tsv` formatu.
+*   **Use for Analysis:** Patvirtina galutinį duomenų rinkinį, kuris bus naudojamas grafikų braižymui.
+    - Šį mygtuką paspausti reikia tik tuo atvėju, kai norite, kad pritaikyti filtrai ir naujai gauta lentelė būtų naudojama grafikuose. Jei norėsite grafikuose vaikščioti tarp originalių ir keistų duomenų failų rekomenduojame filtruotą failą išsaugoti. Jį reikės įkelti programos pradžioje vietoje originalaus EMU failo. `Use for Analysis` mygtuko dar kartą spausti nereikės.
+
+---
+
+### 2.2. Metaduomenų filtravimo modulis (`metadataFilter.R`)
+
+Šis modulis leidžia paruošti metaduomenų lentelę analizei naudojant šias funkcijas:
+
+####  Mėginių atranka (Filtravimas)
+*   **Stulpelio filtras:** Eilučių atranka pagal pasirinkto stulpelio reikšmes paspaudus `Add Filter`.
+*   **Globalus filtras:** Reikšmių paieška per visus stulpelius vienu metu (tekstinė arba skaitinė) paspaudus `Apply Global Filter`.
+*   **Filtrų valdymas:** Aktyvių filtrų peržiūra ir jų šalinimas paspaudus `X` ikoną šalia filtro pavadinimo.
+
+#### Duomenų redagavimas
+*   **Reikšmių keitimas:** Masinis pasirinkto stulpelio verčių keitimas paspaudus `Replace All`.
+*   **Naujų stulpelių kūrimas:** Galimybė pridėti naują stulpelį paspaudus `Add New Column`.
+    - Užpildytą fiksuota reikšme - `Fixed value`
+    - Tuščias stulpelis - `Empty (NA)`
+    - Eilučių numeracija - `Row numbers`
+    - Kito stulpelio kopija - `Copy from column`
+*   **Tiesioginis redagavimas:** Galimybė keisti reikšmes tiesiogiai lentelės langeliuose (Editable cells).
+
+#### Stulpelių ir eilučių valdymas
+*   **Šalinimas:** Pasirinktų stulpelių pašalinimas paspaudus `Remove Selected`.
+*   **Pervadinimas:** Stulpelio pavadinimo keitimas paspaudus `Rename`.
+*   **Rūšiavimas:** Lentelės rikiavimas pagal pasirinktą stulpelį paspaudus `Sort`.
+    - Didėjimo (Asc.) arba mažėjimo (Desc.) tvarka
+
+#### Rezultatai ir eksportas
+*   **Atstatymas:** Grįžimas prie pradinės lentelės būsenos paspaudus `Reset Metadata`.
+*   **Eksportas:** Paruoštos lentelės atsisiuntimas paspaudus `Download CSV` arba `Download Excel`.
+*   **Patvirtinimas:** Duomenų perdavimas į analizės modulius paspaudus `Confirm Metadata for Analysis`.
+
+---
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+### 🛠️ Techninė filtravimo logika
+*   **Reaktyvumas:** Filtrai sukurti naudojant `reactiveValues` ir `observeEvent` funkcijas, todėl pakeitimai viename modulyje gali daryti įtaką visai programos būsenai realiu laiku.
+*   **Duomenų vientisumas:** Filtravimo metu sukuriami nauji duomenų objektai, todėl pirminiai duomenys išlieka nepakitę iki sesijos pabaigos.
 
 ### 3. Amplicon analizė
 Programoje integruoti šie analizės įrankiai:
