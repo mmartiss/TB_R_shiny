@@ -24,7 +24,15 @@ ui <- dashboardPage(
   dashboardBody(
     tabItems(
       tabItem(tabName = "start",
-              h2("Pradzia")
+        fluidRow(
+          box(
+            width = 12, 
+            status = "primary", 
+            solidHeader = TRUE, 
+            title = "Informacija apie programą",
+            includeMarkdown("instructions.md")
+          )
+        )
       ),
       tabItem(
         tabName = "upload", 
