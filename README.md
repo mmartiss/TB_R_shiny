@@ -51,12 +51,12 @@ Jei savo kompiuteryje neturite įsidiegę R arba norite greito paleidimo būdo, 
 Prieš pradedant, įsitikinkite, kad turite įsidiegę [R](https://www.r-project.org/) (>= 4.1) ir [RStudio](https://posit.co/download/rstudio-desktop/).
 
 ### Diegimas
-1. Atsisiųskite projektą
+1. Atsisiųsti projektą
    ```bash
    git clone https://github.com/mmartiss/TB_R_shiny.git
    cd TB_R_shiny
    ```
-2. Įdiegiame patį BiocManager (jei jo dar nėra)
+2. Įdiegti BiocManager (jei jo dar nėra)
     ```R
     if (!require("BiocManager", quietly = TRUE))
         install.packages("BiocManager")
@@ -159,10 +159,10 @@ Specifinės funkcijos, pritaikytos mikrobiomo duomenims:
 *   **Group by Taxonomy:** Duomenų agregavimas. Galite sumuoti visus skaitymus pasirinktame lygmenyje (pvz., sumuoti visas rūšis į šeimų (family) ar genčių (genus) lygmenį).
 
 #### Eksportas ir valdymas
-*   **Reset All:** Vieno paspaudimu grįžtama prie pradinių įkeltų duomenų.
+*   **Reset All:** Vienu paspaudimu grįžtama prie pradinių įkeltų duomenų.
 *   **Eksportas:** Apdorotą lentelę bet kuriame etape galima atsisiųsti `.csv` arba `.tsv` formatu.
 *   **Use for Analysis:** Patvirtina galutinį duomenų rinkinį, kuris bus naudojamas grafikų braižymui.
-    - Šį mygtuką paspausti reikia tik tuo atvėju, kai norite, kad pritaikyti filtrai ir naujai gauta lentelė būtų naudojama grafikuose. Jei norėsite grafikuose vaikščioti tarp originalių ir keistų duomenų failų rekomenduojame filtruotą failą išsaugoti. Jį reikės įkelti programos pradžioje vietoje originalaus EMU failo. `Use for Analysis` mygtuko dar kartą spausti nereikės.
+    - Šį mygtuką paspausti reikia tik tuo atveju, kai norite, kad pritaikyti filtrai ir naujai gauta lentelė būtų naudojama grafikuose. Jei norėsite grafikuose vaikščioti tarp originalių ir keistų duomenų failų, rekomenduojame filtruotą failą išsaugoti. Jį reikės įkelti programos pradžioje vietoje originalaus EMU failo. `Use for Analysis` mygtuko dar kartą spausti nereikės.
 
 ---
 
@@ -174,13 +174,13 @@ Pasirinkimas: `Metadata filtering`.
 
 ####  Mėginių atranka (Filtravimas)
 *   **Stulpelio filtras:** Eilučių atranka pagal pasirinkto stulpelio reikšmes paspaudus `Add Filter`.
-*   **Globalus filtras:** Reikšmių paieška per visus stulpelius vienu metu (tekstinė arba skaitinė) paspaudus `Apply Global Filter`.
+*   **Globalus filtras:** Reikšmių paieška per visus stulpelius vienu metu (teksto arba skaičių) paspaudus `Apply Global Filter`.
 *   **Filtrų valdymas:** Aktyvių filtrų peržiūra ir jų šalinimas paspaudus `X` ikoną šalia filtro pavadinimo.
 
 #### Duomenų redagavimas
 *   **Reikšmių keitimas:** Masinis pasirinkto stulpelio verčių keitimas paspaudus `Replace All`.
 *   **Naujų stulpelių kūrimas:** Galimybė pridėti naują stulpelį paspaudus `Add New Column`.
-    - Užpildytą fiksuota reikšme - `Fixed value`
+    - Užpildytas fiksuota reikšme - `Fixed value`
     - Tuščias stulpelis - `Empty (NA)`
     - Eilučių numeracija - `Row numbers`
     - Kito stulpelio kopija - `Copy from column`
@@ -215,7 +215,7 @@ Pasirinkimas: `Metadata filtering`.
   - Dendrogram – pagal mėginių panašumą (cluster analizė), bar plot ir heatmap prideda medį.
   - Shannon / Observed – pagal bioįvairovės rodiklius.
   - Bray-Curtis / Jaccard / UniFrac – pagal pasirinktą beta įvairovės metriką.
-- Sample Type Filter: Leidžia greitai atfiltruoti mėginius pagal jų pavadinimo pabaigą (pvz., tik -S tipo arba tik -T tipo mėginiai).
+- Sample Type Filter: Leidžia greitai atfiltruoti mėginius pagal mėginio pavadinimo pabaigą (pvz., tik -S tipo arba tik -T tipo mėginiai).
 
 ### 3.2 Taxonomic Bar Chart (Taksonominė sudėtis)
 Tai pagrindinis grafikas, rodantis santykinį bakterijų gausumą (procentais).
@@ -223,7 +223,7 @@ Tai pagrindinis grafikas, rodantis santykinį bakterijų gausumą (procentais).
 - Valdymas:
   - Spalvų keitimas: Virš grafiko atsiranda spalvų sąrašas su pavadinimais. Spustelėkite ant spalvos kvadrato ir pasirinkite naują spalvą – grafikas atsinaujins realiu laiku.
   - Slinkimas: Grafikas yra labai platus (2000px), todėl jį galite slinkti į šonus (horizontal scroll), kad matytumėte visus mėginius aiškiai.
-- Svarbu: Jei pagrindiniuose nustatymuose (viršuje) pasirinkote Sort Samples By: Dendrogram, po stulpeliais bus nubraižytas mėginių panašumo medis.
+- Svarbu: Jei pagrindiniuose nustatymuose (viršuje) pasirinkote `Sort Samples By`: `Dendrogram`, po stulpeliais bus nubraižytas mėginių panašumo medis.
 
 
 ### 3.3 Heatmap
@@ -239,18 +239,18 @@ Vizualizuoja taksonų gausumą spalvų skale.
 - Ką galima daryti: Palyginti skirtingų grupių bioįvairovės indeksus.
 - Valdymas:
   - Metrics: Pažymėkite varneles prie Observed, Shannon, Simpson ar InvSimpson, kad pamatytumėte skirtingus skaičiavimo metodus.
-  - Grupavimas: Laukelyje Group By (Metadata) pasirinkite stulpelį iš savo metaduomenų (pvz., ligos stadija, lytis), kad mėginiai būtų sugrupuoti į dėžines diagramas (Boxplots).
+  - Grupavimas: Laukelyje Group By (Metadata) pasirinkite stulpelį iš savo metaduomenų (pvz., liga), kad mėginiai būtų sugrupuoti į Boxplots.
   - Sub-filtravimas: Laukelyje Select values galite atsirinkti tik tam tikras grupes (pvz., palikti tik „Control“ grupę).
 - Reikalavimas: Grupavimo funkcijos neveiks be įkeltų metaduomenų failo.
 
 ### 3.5 Beta Diversity (Beta įvairovė)
 Rodo mėginių tarpusavio panašumą PCoA (Principal Coordinates Analysis) grafike.
-- Ką galima daryti: Matyti, ar mėginiai formuoti klasterius (grupes) pagal panašumą.
+- Ką galima daryti: Matyti, ar mėginiai formuoja grupes (klasterius) pagal panašumą.
 - Valdymas:
-  - Distance Metric: Pasirinkite metodą (Bray-Curtis, Jaccard). UniFrac pasirinkimai veiks tik jei įkėlėte filogenetinį medį.
+  - Distance Metric: Pasirinkite metodą (Pvz. Bray-Curtis, Jaccard). UniFrac pasirinkimai veiks tik jei įkėlėte filogenetinį medį.
   - Color Samples By: Nuspalvinkite taškus pagal:
     - Metadata Category (reikia metaduomenų).
-    - Taxon Abundance – nuspalvina mėginius pagal jūsų pasirinktos konkrečios bakterijos kiekį (pasirinkite bakteriją Select Taxon laukelyje).
+    - Taxon Abundance – nuspalvina mėginius pagal jūsų pasirinkto taksono kiekį (pasirinkite taksoną `Select Taxon` laukelyje).
     - Dominant Taxon – nuspalvina pagal tai, kokia bakterija tame mėginyje gausiausia.
 - Reikalavimas: UniFrac atstumams būtinas .nwk medis.
 
@@ -259,48 +259,118 @@ Grafinis taksonų sudėties vidurkis jūsų pasirinktose grupėse.
 - Ką galima daryti: Matyti ne kiekvieną mėginį atskirai, o bendrą vaizdą pagal kategorijas.
 - Valdymas:
   - X Axis (Category): Pasirinkite metaduomenų stulpelį, kuris bus apačioje (pvz., amžiaus grupė). Programa susumuos visų tos grupės mėginių vidurkius.
-  - Facet Row / Facet Column: Galimybė suskaidyti grafiką į langelius pagal papildomus metaduomenis (pvz., viršuje – amžius, šone – lytis).
-  - Show individual samples: Pažymėkite, jei norite matyti ne vidurkį, o visus tos grupės mėginius sudėtus vieną šalia kito.
+  - Facet Row / Facet Column: Galimybė suskaidyti grafiką į langelius pagal papildomus metaduomenis (pvz., viršuje - tepinėlis, šone – TB tipas).
+  - Show individual samples: Pažymėkite, jei norite matyti ne vidurkį, o visus tos grupės mėginius, sudėtus vieną šalia kito.
   - Keep in: Galite pasirinkti, kurias konkrečias kategorijų vertes įtraukti į grafiką.
 - Reikalavimas: Ši kortelė bus visiškai tuščia, jei neįkėlėte metaduomenų failo.
 
 ---
 
-## 📝 Terminai (Angl. -> Liet.)
+## Terminai (Angl. -> Liet.)
 
+### Duomenų valdymas ir struktūra
 | Angliškai | Lietuviškai | Apibrėžimas |
 | :--- | :--- | :--- |
-| Relative Abundance | Santykinis gausumas | Procentinė taksono dalis visame mėginyje. |
-| Metadata | Metaduomenys | Papildoma informacija apie mėginius (pvz. amžius, lytis). |
-| Alpha Diversity | Alfa įvairovė | Rūšių įvairovė vieno mėginio viduje. |
-| Beta Diversity | Beta įvairovė | Skirtumai tarp skirtingų bendrijų/mėginių. |
+| **Remove Column** | Stulpelio šalinimas | Pasirinkto stulpelio (pvz., nereikalingo mėginio) ištrynimas iš lentelės. |
+| **Rename Column** | Stulpelio pervadinimas | Galimybė suteikti naują pavadinimą esamam stulpeliui. |
+| **Sort By** | Rūšiuoti pagal | Eilučių rikiavimas didėjimo arba mažėjimo tvarka pagal pasirinktą stulpelį. |
+| **Batch Replace** | Masinis keitimas | Funkcija, leidžianti vienu metu visas senas vertes pakeisti naujomis. |
+| **Add New Column** | Naujo stulpelio pridėjimas | Naujo tuščio arba užpildyto stulpelio įterpimas į lentelę. |
+| **Fixed Value** | Fiksuota reikšmė | Viena konstanta (tekstas ar skaičius), kuria užpildomas visas stulpelis. |
+| **Row Numbers** | Eilučių numeracija | Automatinis stulpelio sugeneravimas su eilučių eilės numeriais. |
+| **Copy from Column** | Kopijuoti iš stulpelio | Naujo stulpelio sukūrimas dubliuojant kito stulpelio duomenis. |
+| **Load Data** | Įkelti duomenis | Mygtukas, kuris aktyvuoja pasirinktų failų nuskaitymą į atmintį. |
+
+### Filtravimas
+| Angliškai | Lietuviškai | Apibrėžimas |
+| :--- | :--- | :--- |
+| **Global Value Filter** | Globalus reikšmių filtras | Funkcija, ieškanti reikšmės visuose stulpeliuose vienu metu. |
+| **Global Ignore** | Globalus ignoravimas | Stulpelių pasirinkimas, kurie nebus įtraukti į globalią paiešką. |
+| **Filter by Specific Column** | Filtras pagal stulpelį | Vieno konkretaus stulpelio atrinkimas |
+| **Any column matches** | Atitinka bet kuris | Logika: palikti eilutę, jei *bent viename* stulpelyje rasta reikšmė. |
+| **All columns match** | Atitinka visi | Logika: palikti eilutę tik jei *visuose* stulpeliuose rasta reikšmė. |
+| **Min Total Reads** | Min. bendras skaitymų kiekis | Riba, nuo kurios pašalina taksonus, kurių suma per visus mėginius yra per maža. |
+| **Taxonomy Join** | Taksonomijos prijungimas | Funkcija, sujungianti gausumo lentelę su taksonomijos aprašymais. |
+| **Group & Sum Counts** | Grupuoti ir sumuoti | Duomenų agregavimas į aukštesnį lygį (pvz., visų rūšių sumavimas į genties lygį). |
+| **Active Filters** | Aktyvūs filtrai | Sąrašas šiuo metu pritaikytų taisyklių, kurias galima atšaukti. |
+
+### Amplikonų analizė
+| Angliškai | Lietuviškai | Apibrėžimas |
+| :--- | :--- | :--- |
+| **Taxonomic Level** | Taksonominis lygmuo | Klasifikacijos gylis (rūšis, gentis, šeima, būrys, klasė, tipas). |
+| **Top N Taxa** | N gausiausių taksonų | Apribojimas rodyti tik tam tikrą skaičių dominuojančių bakterijų. |
+| **Sample Type Filter** | Mėginių tipo filtras | Greita atranka pagal mėginių pavadinimų galūnes (pvz., `-S` arba `-T`). |
+| **Sort Samples By** | Rūšiuoti mėginius pagal | Mėginių išdėstymo tvarka grafike (pagal abėcėlę, įvairovę ar panašumą). |
+| **Alpha Diversity** | Alfa įvairovė | Vieno mėginio vidinė rūšių įvairovė |
+| **Beta Diversity** | Beta įvairovė | Sudėties skirtumai tarp skirtingų mėginių (panašumo analizė). |
+| **Color Editor** | Spalvų redaktorius | Interaktyvus įrankis, leidžiantis keisti kiekvieno taksono spalvą grafike. |
+| **Distance Metric** | Atstumo metrika | Matematinis būdas apskaičiuoti skirtumą tarp mėginių (pvz., Bray-Curtis). |
+| **PCoA** | Pagrindinių koordinačių analizė | Beta įvairovės vizualizavimo būdas 2D erdvėje. |
+| **Dominant Taxon** | Dominuojantis taksonas | Gausiausia bakterijų rūšis konkrečiame mėginyje. |
+| **Facet Row/Column** | Skaidymas eilutėmis/stulpeliais | Grafiko suskaidymas į langelius pagal metaduomenų kategorijas. |
+| **Show Individual Samples** | Rodyti pavienius mėginius | Nustatymas, ar rodyti grupės vidurkį, ar kiekvieną mėginį atskirai. |
+| **Reset All** | Atstatyti viską | Visų pritaikytų filtrų ir pakeitimų anuliavimas. |
+| **Use for Analysis** | Naudoti analizei | Patvirtinimas, kad apdoroti duomenys yra paruošti grafikų braižymui. |
 
 ---
 
 ## Kodo dokumentacija
 
 ### Naudojamos bibliotekos
-* `shiny`: Vartotojo sąsajai kurti.
-* `tidyverse`: Duomenų transformacijai.
-* `phyloseq`: Mikrobiomo duomenų analizei.
-* `plotly`: Interaktyviems grafikams.
+- `shiny`
+- `shinydashboard`
+- `shinyWidgets`
+- `DT`
+- `plotly`
+- `ape`
+- `readxl`
+- `writexl`
+- `tidyr`
+- `dplyr`
+- `vegan`
+- `phyloseq`
+- `phytools`
+- `ggtree`
+- `ggdendro`
+- `markdown`
 
-### Veikimo principai
-Programa naudoja `reactive` elementus, todėl pasikeitus filtravimo parametrams, visi grafikai persipiešia automatiškai be puslapio perkrovimo.
 
-### Priimti sprendimai
-* **Moduliarizacija:** Pasirinkta `Shiny modules` architektūra, kad būtų išvengta "spagečių kodo" viename faile.
-* **Filtravimas:** Sprendimas filtruoti duomenis *prieš* vizualizaciją priimtas siekiant optimizuoti programos greitaveiką dirbant su dideliais duomenų kiekiais.
+### Techniniai sprendimai ir algoritmai
+
+### 1. Bioįvairovės skaičiavimai
+Programoje naudojami standartiniai bioinformatikos metodai, realizuoti per specializuotas bibliotekas:
+
+*   **Alfa įvairovė (Alpha Diversity):**
+    *   **Shannon, Simpson, InvSimpson:** Skaičiuojami naudojant `vegan::diversity()` funkciją.
+    *   **Observed:** Skaičiuojamas unikalių taksonų kiekis eilutėje (`rowSums(mat > 0)`).
+*   **Beta įvairovė (Beta Diversity):**
+    *   **Bray-Curtis ir Jaccard:** Skaičiuojami naudojant `vegan::vegdist()`. Jaccard metrikai naudojamas nustatymas `binary = TRUE`.
+    *   **Weighted ir Unweighted UniFrac:** Skaičiuojami naudojant `phyloseq::UniFrac()`. Tai evoliuciniu atstumu grįstos metrikos, kurioms būtinas filogenetinis medis.
+
+### 2. Dendrogramos ir rūšiavimas
+Kai pasirenkate rūšiavimą pagal **Dendrogram**, programa atlieka šiuos žingsnius:
+1.  **Atstumų matrica:** Apskaičiuojama pagal pasirinktą metriką (pvz., Bray-Curtis).
+2.  **Klasterizacija:** Naudojama **Ward.D2** metodika (`hclust(dist_mat, method = "ward.D2")`). Šis metodas minimizuoja dispersiją klasterių viduje, todėl grupės grafiškai atrodo labai aiškiai.
+3.  **Duomenų gavyba:** Naudojamas `ggdendro::dendro_data()`, kad medžio struktūra būtų paversta koordinatėmis, kurias gali atvaizduoti `plotly`.
+
+### 3. Filogenetinio medžio apdorojimas
+Įkeltas `.nwk` failas (`data_res$tree`) nėra tiesiogiai braižomas, jis naudojamas kaip skaičiavimų pagrindas:
+*   **Suderinimas:** Naudojant `ape::keep.tip()`, medis apkarpomas taip, kad jame liktų tik tie taksonai, kurie egzistuoja jūsų gausumo lentelėje.
+*   **Šaknies nustatymas:** Naudojamas `phytools::midpoint.root()`. Tai kritiškai svarbu, nes UniFrac algoritmas reikalauja, kad medis būtų su šaknimi (rooted).
+*   **Struktūros korekcija:** Naudojama `ape::multi2di()`, kuri išskleidžia politomijas (daugiašakius mazgus) į dichotominę struktūrą, kad skaičiavimai būtų stabilūs.
+
+### 4. Grafinis atvaizdavimas
+Visi programos grafikai yra sugeneruoti derinant dvi technologijas:
+*   **Variklis:** `ggplot2` naudojamas sudėtingoms diagramoms (Boxplots, PCoA, Facets) konstruoti.
+*   **Interaktyvumas:** Galutiniai `ggplot2` objektai paverčiami į interaktyvius elementus naudojant `plotly::ggplotly()`. Tai leidžia vartotojui:
+    *   Priartinti grafiko dalis (zoom).
+    *   Užėjus su pele pamatyti tikslias vertes (Tooltip).
+    *   Atsisiųsti grafiką kaip `.png` paveikslėlį tiesiai iš naršyklės.
+
+### 5. Duomenų transformacija
+*   **Long format:** Gausumo duomenys viduje paverčiami iš „plačios“ lentelės (kur stulpeliai yra mėginiai) į „ilgą“ formatą (`tidyr::pivot_longer`), kad būtų galima efektyviai filtruoti ir grupuoti duomenis pagal metaduomenis.
+*   **Relative Abundance:** Santykinis gausumas skaičiuojamas kiekvieną kartą generuojant grafiką (`counts / sum(counts)`), todėl vartotojas gali laisvai keisti taksonominį lygmenį, o programa automatiškai perskaičiuoja procentus.
 
 ---
 
-💡 *Pastaba: Ši programa vis dar aktyviai vystoma.*
-```
-
-### Kas buvo pakeista/pagerinta:
-1.  **Vizualinis aiškumas:** Pridėtos piktogramos (emoji), kurios padeda greičiau orientuotis tekste.
-2.  **Struktūra:** Pridėtas "Turinys" (Table of Contents), kad būtų lengva naršyti po ilgą dokumentą.
-3.  **Diegimo instrukcijos:** Pridėtas konkretus kodo blokas, kaip atsisiųsti ir paleisti programą (tai labai svarbu programuotojams).
-4.  **Lentelės:** Terminų žodynas pateiktas tvarkingoje Markdown lentelėje.
-5.  **Išsamesnis aprašymas:** Užpildyti skyriai apie filtravimą ir analizę, kad būtų aišku, ką programa iš tiesų daro.
-6.  **Techninės detalės:** Pridėtas minimalus reikalaujamų R paketų sąrašas.
+---

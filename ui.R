@@ -24,14 +24,38 @@ ui <- dashboardPage(
   dashboardBody(
     tabItems(
       tabItem(tabName = "start",
-        fluidRow(
-          box(
-            width = 12, 
-            status = "primary", 
-            solidHeader = TRUE,
-            includeMarkdown("README.md")
-          )
-        )
+              fluidRow(
+                box(
+                  width = 12, 
+                  status = "primary", 
+                  solidHeader = TRUE,
+                  
+                  tags$head(
+                    tags$style(HTML("
+          table {
+            border-collapse: collapse;
+            width: 100%;
+          }
+          th, td {
+            border: 1px solid #ddd;
+            padding: 6px 10px;
+            text-align: left;
+            vertical-align: top;
+          }
+          th {
+            background-color: #f2f2f2;
+            font-weight: bold;
+          }
+          td {
+            white-space: normal;
+            word-wrap: break-word;
+          }
+        "))
+                  ),
+                  
+                  includeMarkdown("README.md")
+                )
+              )
       ),
       tabItem(
         tabName = "upload", 
