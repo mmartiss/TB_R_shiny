@@ -53,12 +53,12 @@ ampliconUI <- function(id) {
       tabPanel("Taxonomic Bar Chart", 
                uiOutput(ns("color_editor_ui")),
                div(style = "overflow-x: auto; width: 100%;", 
-                   plotlyOutput(ns("plot_bar"), width = "2000px", height = "800px")
+                   plotlyOutput(ns("plot_bar"), width = "1600px", height = "800px")
                )),
       
       # Taxon-by-sample abundance heatmap
       tabPanel("Heatmap", 
-               plotlyOutput(ns("plot_heatmap"), height = "800px")),
+               plotlyOutput(ns("plot_heatmap"), width = "1600px", height = "800px")),
       
       # Within-sample diversity metrics
       tabPanel("Alpha Diversity", 

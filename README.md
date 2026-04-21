@@ -222,7 +222,7 @@ Tai pagrindinis grafikas, rodantis santykinį bakterijų gausumą (procentais).
 - Ką galima daryti: Matyti, kaip pasiskirsto dominuojančios rūšys kiekviename mėginyje.
 - Valdymas:
   - Spalvų keitimas: Virš grafiko atsiranda spalvų sąrašas su pavadinimais. Spustelėkite ant spalvos kvadrato ir pasirinkite naują spalvą – grafikas atsinaujins realiu laiku.
-  - Slinkimas: Grafikas yra labai platus (2000px), todėl jį galite slinkti į šonus (horizontal scroll), kad matytumėte visus mėginius aiškiai.
+  - Slinkimas: Grafikas yra labai platus (1600px), todėl jį galite slinkti į šonus (horizontal scroll), kad matytumėte visus mėginius aiškiai.
 - Svarbu: Jei pagrindiniuose nustatymuose (viršuje) pasirinkote `Sort Samples By`: `Dendrogram`, po stulpeliais bus nubraižytas mėginių panašumo medis.
 
 
