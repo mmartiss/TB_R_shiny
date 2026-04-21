@@ -129,6 +129,9 @@ Duomenų filtravimas NEPRIVALOMAS. Jei nenorite keisti ar tikrinti įkeltų duom
 Programą sudaro du pagrindiniai moduliai: `filter` ir `metadataFilter`. 
 
 ### 2.1. EMU duomenų filtravimo modulis (`filter`)
+
+Pasirinkimai: `Abundance filtering`, `Counts filtering`, `Taxonomy filtering`. 
+
 Šis modulis yra universalus ir programoje naudojamas **tris kartus** kaip trys nepriklausomi filtrai šiems duomenų rinkiniams:
 1.  **Santykinis gausumas (Abundance)** - `Abundance filtering`
 2.  **Skaitymų skaičius (Counts)** - `Counts filtering`
@@ -165,6 +168,8 @@ Specifinės funkcijos, pritaikytos mikrobiomo duomenims:
 
 ### 2.2. Metaduomenų filtravimo modulis (`metadataFilter.R`)
 
+Pasirinkimas: `Metadata filtering`.
+
 Šis modulis leidžia paruošti metaduomenų lentelę analizei naudojant šias funkcijas:
 
 ####  Mėginių atranka (Filtravimas)
@@ -194,51 +199,45 @@ Specifinės funkcijos, pritaikytos mikrobiomo duomenims:
 
 ---
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-### 🛠️ Techninė filtravimo logika
-*   **Reaktyvumas:** Filtrai sukurti naudojant `reactiveValues` ir `observeEvent` funkcijas, todėl pakeitimai viename modulyje gali daryti įtaką visai programos būsenai realiu laiku.
-*   **Duomenų vientisumas:** Filtravimo metu sukuriami nauji duomenų objektai, todėl pirminiai duomenys išlieka nepakitę iki sesijos pabaigos.
-
 ### 3. Amplicon analizė
-Programoje integruoti šie analizės įrankiai:
-* 📊 **Bar plots:** Taksonominės sudėties pasiskirstymas.
-* 🌡️ **Heatmap:** Gausiausių rūšių palyginimas tarp mėginių.
-* 🌱 **Alpha diversity:** Shannon, Simpson indeksų skaičiavimas.
-* 🗺️ **Beta diversity:** PCoA arba NMDS ordinacijos grafikai.
-* 🧪 **Metadata analysis:** Ryšių tarp biologinių duomenų ir klinikinių faktorių paieška.
+
+### 3.1 Pagrindiniai nustatymai
+
+- Taxonomic level: Pasirenkamas taksonominis gylis (nuo species iki phylum), kuriame bus atliekama analizė.
+- Top N taxa: Nurodomas gausiausių taksonų skaičius (pvz., 20), kurie bus vaizduojami atskirai. Visi kiti mažesnio gausumo taksonai bus sugrupuoti į kategoriją „Other“.
+- Color palette: Parenkama spalvų paletė taksonams atvaizduoti (pvz., Tableau 10, Pastel, Viridis).
+- Sort Samples By: Nustatoma mėginių rikiavimo tvarka visuose grafikuose:
+  - Alphabetical – pagal pavadinimą.
+  - Dendrogram – pagal mėginių panašumą (cluster analizė), bar plot ir heatmap prideda medį.
+  - Shannon / Observed – pagal bioįvairovės rodiklius.
+  - Bray-Curtis / Jaccard / UniFrac – pagal pasirinktą beta įvairovės metriką.
+- Sample Type Filter: Leidžia greitai atfiltruoti mėginius pagal jų pavadinimo pabaigą (pvz., tik -S tipo arba tik -T tipo mėginiai).
+
+### 3.2 Taxonomic Bar Chart (Taksonominė sudėtis)
+Tai pagrindinis grafikas, rodantis santykinį bakterijų gausumą (procentais).
+- Ką galima daryti: Matyti, kaip pasiskirsto dominuojančios rūšys kiekviename mėginyje.
+- Valdymas:
+  - Spalvų keitimas: Virš grafiko atsiranda spalvų sąrašas su pavadinimais. Spustelėkite ant spalvos kvadrato ir pasirinkite naują spalvą – grafikas atsinaujins realiu laiku.
+  - Slinkimas: Grafikas yra labai platus (2000px), todėl jį galite slinkti į šonus (horizontal scroll), kad matytumėte visus mėginius aiškiai.
+- Svarbu: Jei pagrindiniuose nustatymuose (viršuje) pasirinkote Sort Samples By: Dendrogram, po stulpeliais bus nubraižytas mėginių panašumo medis.
+
+
+### 3.3 Heatmap
+Vizualizuoja taksonų gausumą spalvų skale.
+- Ką galima daryti: Identifikuoti taksonus, kurie būdingi tik tam tikroms mėginių grupėms.
+- Valdymas: Naudoja tuos pačius „Top N“ taksonus, nustatytus viršutiniame skydelyje.
+- Svarbu: Kaip ir stulpelinėje diagramoje, čia gali būti rodoma dendrograma, padedanti grupuoti panašius mėginius.
+
+
+
+### 3.4 Alpha Diversity (Alfa įvairovė)
+
+- Ką galima daryti: Palyginti skirtingų grupių bioįvairovės indeksus.
+- Valdymas:
+  - Metrics: Pažymėkite varneles prie Observed, Shannon, Simpson ar InvSimpson, kad pamatytumėte skirtingus skaičiavimo metodus.
+  - Grupavimas: Laukelyje Group By (Metadata) pasirinkite stulpelį iš savo metaduomenų (pvz., ligos stadija, lytis), kad mėginiai būtų sugrupuoti į dėžines diagramas (Boxplots).
+  - Sub-filtravimas: Laukelyje Select values galite atsirinkti tik tam tikras grupes (pvz., palikti tik „Control“ grupę).
+- Reikalavimas: Grupavimo funkcijos neveiks be įkeltų metaduomenų failo.
 
 ---
 
