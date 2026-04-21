@@ -11,11 +11,12 @@
 
 ## Turinys
 - [Įvadas](#įvadas)
-- [Diegimas ir paleidimas](#diegimas-ir-paleidimas)
+- [Naudojimas be R](#naudojimas-be-r-windows-vartotojams)
+- [Diegimas](#diegimas-ir-paleidimas)
 - [Programos struktūra](#programos-struktūra)
-- [Funkcionalumas](#funkcionalumas)
-- [Terminų žodynas](#terminų-žodynas)
-- [Techninė dokumentacija](#techninė-dokumentacija)
+- [Naudojimosi instrukcija](#naudojimosi-instrukcija)
+- [Terminų žodynas](#terminai)
+- [Kodo dokumentacija](#kodo-dokumentacija)
 
 ---
 
@@ -266,8 +267,8 @@ Grafinis taksonų sudėties vidurkis jūsų pasirinktose grupėse.
 
 ---
 
-## Terminai (Angl. -> Liet.)
-
+## Terminai 
+(Angl. -> Liet.)
 ### Duomenų valdymas ir struktūra
 | Angliškai | Lietuviškai | Apibrėžimas |
 | :--- | :--- | :--- |
