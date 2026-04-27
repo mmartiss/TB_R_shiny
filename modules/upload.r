@@ -40,7 +40,7 @@ uploadUI <- function(id) {
     ),
     
     # Reader configuration and load action
-    uiOutput(ns("delimiter_ui")),
+    uiOutput(ns("delimeter_ui")),
     checkboxInput(ns("header"), "First row is header", value = TRUE),
     
     actionButton(ns("btn_load"), "Load Data", class = "btn-primary", icon = icon("upload")),
@@ -71,7 +71,7 @@ uploadServer <- function(id) {
     }
     
     # Delimiter selector shown in the UI
-    output$delimiter_ui <- renderUI({
+    output$delimeter_ui <- renderUI({
       tagList(
         selectInput(session$ns("delimeter"), "Delimiter",
                     choices = c("Tab (TSV)" = "\t", "Comma (CSV)" = ",", "Semicolon" = ";"))
